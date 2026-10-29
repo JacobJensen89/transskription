@@ -29,12 +29,21 @@
       <p id="live-status" class="status" hidden></p>
       <p id="live-interim" class="interim" hidden></p>
       <p id="live-warning" class="note warning" role="alert" hidden></p>
+      <div class="row markers">
+        <span class="hint">Markér i teksten:</span>
+        <button type="button" class="secondary small" data-marker="Beslutning">Beslutning</button>
+        <button type="button" class="secondary small" data-marker="Handling">Handling</button>
+        <button type="button" class="secondary small" data-marker="Vigtigt">Vigtigt</button>
+      </div>
     </section>
 
     <section class="card">
       <h2><span class="step">2</span> Oplysninger</h2>
       <label class="field">Titel
         <input type="text" id="title" placeholder="Fx Projektmøde om ny cykelsti" autocomplete="off">
+      </label>
+      <label class="field">Projekt <span class="hint">(valgfri, så assistenten kan sortere den)</span>
+        <input type="text" id="project" placeholder="Fx Cykelstien" autocomplete="off">
       </label>
       <label class="field">Dato
         <input type="date" id="date">
@@ -50,10 +59,54 @@
       <p id="count" class="status counter">0 ord</p>
       <div class="row">
         <button type="button" id="save-md" disabled>Gem som .md-fil</button>
+        <button type="button" class="secondary" id="share" hidden>Del fil</button>
         <button type="button" class="secondary" id="copy" disabled>Kopiér tekst</button>
         <button type="button" class="secondary" id="reset" disabled>Ny optagelse</button>
       </div>
     </section>
+
+    <details class="card settings" id="settings">
+      <summary>Indstillinger</summary>
+      <label class="check"><input type="checkbox" id="opt-commands">
+        <span>Stemmekommandoer<small>Sig fx «punktum» eller «ny linje», så skrives tegnet i stedet for ordet.</small></span></label>
+      <label class="check"><input type="checkbox" id="opt-capitals">
+        <span>Stort begyndelsesbogstav i hver sætning</span></label>
+      <label class="check"><input type="checkbox" id="opt-period">
+        <span>Sæt punktum efter hver sætning<small>Hvis den ikke selv har sat et tegn.</small></span></label>
+      <label class="check"><input type="checkbox" id="opt-longest">
+        <span>Vælg den længste udgave<small>Tale-tjenesten foreslår flere udgaver af hver sætning. Slå den til, hvis der mangler tekst efter lange passager.</small></span></label>
+      <label class="field">Skriftstørrelse i tekstfeltet: <b id="font-label"></b>
+        <input type="range" id="opt-font" min="14" max="28" step="1">
+      </label>
+      <label class="field">Udseende
+        <select id="opt-theme">
+          <option value="auto">Som telefonen</option>
+          <option value="light">Lyst</option>
+          <option value="dark">Mørkt</option>
+        </select>
+      </label>
+      <label class="field">Egne ord <span class="hint">(ét ord pr. linje: <code>forkert = rigtigt</code>)</span>
+        <textarea id="opt-words" rows="5" placeholder="øjen = Jørgen&#10;søren = Søren"></textarea>
+      </label>
+      <p class="status">Bruges på ny tekst, mens der tales. Til tekst, der allerede står der, tryk på knappen.</p>
+      <div class="row">
+        <button type="button" class="secondary" id="fix-words">Ret egne ord i hele teksten</button>
+      </div>
+      <p id="fix-result" class="status" hidden></p>
+      <details class="commands">
+        <summary>Stemmekommandoer (kan slås fra)</summary>
+        <table>
+          <tr><td>punktum</td><td><code>.</code></td></tr>
+          <tr><td>komma</td><td><code>,</code></td></tr>
+          <tr><td>kolon</td><td><code>:</code></td></tr>
+          <tr><td>semikolon</td><td><code>;</code></td></tr>
+          <tr><td>udråbstegn</td><td><code>!</code></td></tr>
+          <tr><td>spørgsmålstegn</td><td><code>?</code></td></tr>
+          <tr><td>ny linje</td><td>skifter linje</td></tr>
+          <tr><td>nyt afsnit</td><td>tom linje</td></tr>
+        </table>
+      </details>
+    </details>
 
     <footer>
       <p>Filen må ikke lægges direkte i vidensbasen. Giv den til assistenten, som tjekker for navne og private oplysninger først.</p>

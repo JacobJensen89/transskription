@@ -1,9 +1,9 @@
-// Styrer siden: live-tekst med browserens talegenkendelse og at gemme
-// resultatet som en .md-fil.
+// Styrer siden: live-tekst med browserens talegenkendelse, stemmekommandoer,
+// egne ord, markeringer og at gemme resultatet som en .md-fil.
 
 // Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se i
 // bunden af siden, om browseren har hentet den nyeste.
-const VERSION = 9;
+const VERSION = 10;
 
 // Browserens indbyggede talegenkendelse. Den er god til dansk, men lyden sendes
 // til browserens leverandør. Derfor spørger appen, før den bruges første gang.
@@ -16,6 +16,115 @@ let live = null;
 let liveAccepted = false;
 let gaps = []; // Tidsrum, hvor appen var i baggrunden.
 let wakeLock = null;
+
+// ---------- Indstillinger ----------
+
+const SETTINGS_KEY = 'transskription-indstillinger';
+const DEFAULT_SETTINGS = {
+  commands: true, capitals: true, period: true, longest: false,
+  fontSize: 17, theme: 'auto', words: '',
+};
+let settings = { ...DEFAULT_SETTINGS };
+try {
+  Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'));
+} catch { /* standardindstillinger */ }
+
+function saveSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* ikke afgørende */ }
+}
+
+function applySettings() {
+  $('opt-commands').checked = settings.commands;
+  $('opt-capitals').checked = settings.capitals;
+  $('opt-period').checked = settings.period;
+  $('opt-longest').checked = settings.longest;
+  $('opt-font').value = settings.fontSize;
+  $('opt-theme').value = settings.theme;
+  $('opt-words').value = settings.words;
+  $('font-label').textContent = settings.fontSize + ' px';
+  $('text').style.fontSize = settings.fontSize + 'px';
+  if (settings.theme === 'auto') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = settings.theme;
+  wordRules = null;
+}
+
+function bindSettings() {
+  const checks = { 'opt-commands': 'commands', 'opt-capitals': 'capitals', 'opt-period': 'period', 'opt-longest': 'longest' };
+  for (const [id, key] of Object.entries(checks)) {
+    $(id).onchange = () => { settings[key] = $(id).checked; saveSettings(); };
+  }
+  $('opt-font').oninput = () => { settings.fontSize = Number($('opt-font').value); saveSettings(); applySettings(); };
+  $('opt-theme').onchange = () => { settings.theme = $('opt-theme').value; saveSettings(); applySettings(); };
+  $('opt-words').oninput = () => { settings.words = $('opt-words').value; wordRules = null; saveSettings(); };
+  $('fix-words').onclick = fixWordsInText;
+}
+
+// ---------- Tekstbehandling ----------
+
+const WORD_EDGE = (word) => `(?<![\\p{L}\\p{N}])${word}(?![\\p{L}\\p{N}])`;
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+let wordRules = null;
+
+// «forkert = rigtigt», ét par pr. linje.
+function getWordRules() {
+  if (wordRules) return wordRules;
+  wordRules = [];
+  for (const line of settings.words.split('\n')) {
+    const parts = line.split(/\s*(?:=|→|->)\s*/);
+    if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) continue;
+    const from = escapeRegExp(parts[0].trim()).replace(/\s+/g, '\\s+');
+    wordRules.push([new RegExp(WORD_EDGE(from), 'giu'), parts[1].trim()]);
+  }
+  return wordRules;
+}
+
+function applyWords(text) {
+  let count = 0;
+  for (const [re, to] of getWordRules()) {
+    text = text.replace(re, () => { count++; return to; });
+  }
+  return { text, count };
+}
+
+function fixWordsInText() {
+  const { text, count } = applyWords($('text').value);
+  $('text').value = text;
+  $('fix-result').hidden = false;
+  $('fix-result').textContent = getWordRules().length
+    ? `${count} ord rettet.`
+    : 'Skriv først mindst ét par, fx «øjen = Jørgen».';
+  updateButtons();
+}
+
+// Stemmekommandoer. Ordene erstattes af tegnet, og mellemrum rettes til.
+const COMMANDS = [
+  ['spørgsmålstegn', '?'], ['udråbstegn', '!'], ['semikolon', ';'], ['kolon', ':'],
+  ['punktum', '.'], ['komma', ','], ['nyt\\s+afsnit', '\n\n'], ['ny\\s+linje', '\n'],
+].map(([word, symbol]) => [new RegExp(WORD_EDGE(word), 'giu'), symbol]);
+
+function applyCommands(text) {
+  for (const [re, symbol] of COMMANDS) text = text.replace(re, `\u0001${symbol}\u0001`);
+  return text
+    .replace(/\s*\u0001(\n+)\u0001\s*/g, '$1')
+    .replace(/\s*\u0001([.,:;!?])\u0001\s*/g, '$1 ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/[ \t]+$/, '');
+}
+
+function capitalize(text) {
+  return text.replace(/(^|[.!?]\s+|\n)(\p{L})/gu, (m, before, letter) => before + letter.toUpperCase());
+}
+
+function formatSegment(raw) {
+  let t = applyWords(raw.trim()).text;
+  if (settings.commands) t = applyCommands(t);
+  t = t.replace(/^[ \t]+/, '');
+  if (!t) return '';
+  if (settings.capitals) t = capitalize(t);
+  if (settings.period && !/[.!?…:;,\n]$/.test(t)) t += '.';
+  return t;
+}
 
 // ---------- Live-tekst ----------
 
@@ -39,7 +148,7 @@ function toggleLive() {
   liveAccepted = true;
   gaps = [];
   $('live-warning').hidden = true;
-  const state = { active: true, started: Date.now(), paragraphStart: null, gapStart: null, timer: null };
+  const state = { active: true, started: Date.now(), lastSpeech: Date.now(), paragraphStart: null, gapStart: null, timer: null };
   state.elapsed = () => (Date.now() - state.started) / 1000;
   live = state;
   startRecognition(state);
@@ -48,7 +157,10 @@ function toggleLive() {
   $('live').classList.add('recording');
   $('live-status').hidden = false;
   const tick = () => {
-    if (live === state) $('live-status').textContent = 'Lytter … ' + clock(state.elapsed());
+    if (live !== state) return;
+    const quiet = (Date.now() - state.lastSpeech) / 1000;
+    $('live-status').textContent = 'Lytter … ' + clock(state.elapsed())
+      + (quiet > 60 ? ` · Ingen tale registreret i ${clock(quiet)}. Hører mikrofonen dig?` : '');
   };
   tick();
   state.timer = setInterval(tick, 1000);
@@ -59,13 +171,16 @@ function startRecognition(state) {
   rec.lang = 'da-DK';
   rec.continuous = true;
   rec.interimResults = true;
+  rec.maxAlternatives = settings.longest ? 5 : 1;
   const startedAt = Date.now();
   rec.onresult = (e) => {
     let interim = '';
+    state.lastSpeech = Date.now();
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const r = e.results[i];
-      if (r.isFinal) addLiveText(state, r[0].transcript);
-      else interim += r[0].transcript;
+      const text = bestAlternative(r);
+      if (r.isFinal) addLiveText(state, text);
+      else interim += text;
     }
     $('live-interim').hidden = !interim;
     $('live-interim').textContent = interim;
@@ -101,6 +216,17 @@ function startRecognition(state) {
   }
 }
 
+// Med «vælg den længste udgave» tages den længste af de foreslåede udgaver.
+function bestAlternative(result) {
+  let best = result[0].transcript;
+  if (settings.longest) {
+    for (let i = 1; i < result.length; i++) {
+      if (result[i].transcript.length > best.length) best = result[i].transcript;
+    }
+  }
+  return best;
+}
+
 // Google retter nogle gange en sætning, efter den er sendt som endelig, fx ved at
 // tilføje et ord eller skifte store og små bogstaver. Så er den nye ikke en ren
 // forlængelse af den gamle, men de to har næsten alle ord til fælles i samme
@@ -122,10 +248,8 @@ function mostlySame(a, b) {
 }
 
 function addLiveText(state, transcript) {
-  let t = transcript.trim();
+  const t = formatSegment(transcript);
   if (!t) return;
-  t = t[0].toUpperCase() + t.slice(1);
-  if (!/[.!?…]$/.test(t)) t += '.';
   const now = state.elapsed();
   const box = $('text');
   // Chrome på Android sender den samme sætning flere gange, efterhånden som den
@@ -134,7 +258,7 @@ function addLiveText(state, transcript) {
   // Det sker kun, hvis ingen har rettet i teksten imens.
   const norm = t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   const last = state.last;
-  if (last && box.value.length === last.end) {
+  if (last && norm && box.value.length === last.end) {
     if (last.norm.startsWith(norm)) return;
     if (norm.startsWith(last.norm) || mostlySame(last.norm, norm)) {
       box.value = box.value.slice(0, last.start) + t;
@@ -147,12 +271,32 @@ function addLiveText(state, transcript) {
   if (state.paragraphStart === null || now - state.paragraphStart >= PARAGRAPH_S) {
     state.paragraphStart = now;
     box.value += (box.value.trim() ? '\n\n' : '') + `[${clock(now)}] `;
-  } else {
+  } else if (/^[.,:;!?]/.test(t)) {
+    // «punktum», «komma» osv. som egen sætning: tegnet erstatter det punktum,
+    // appen selv havde sat efter forrige sætning.
+    box.value = box.value.replace(/[.!?…]*\s*$/, '');
+  } else if (/^\n/.test(t)) {
+    box.value = box.value.replace(/ +$/, '');
+  } else if (box.value && !/[\n ]$/.test(box.value)) {
     box.value += ' ';
   }
   const start = box.value.length;
   box.value += t;
   state.last = { norm, start, end: box.value.length };
+  box.scrollTop = box.scrollHeight;
+  updateButtons();
+}
+
+// Markeringer til beslutninger og handlinger, så de er lette at finde bagefter.
+function addMarker(label) {
+  const box = $('text');
+  const now = live ? live.elapsed() : null;
+  box.value = box.value.replace(/\s+$/, '') + (box.value.trim() ? '\n\n' : '')
+    + (now === null ? '' : `[${clock(now)}] `) + `**${label}:** `;
+  if (live) {
+    live.paragraphStart = now;
+    live.last = null;
+  }
   box.scrollTop = box.scrollHeight;
   updateButtons();
 }
@@ -212,16 +356,19 @@ async function keepAwake(on) {
 function buildMarkdown() {
   const title = $('title').value.trim() || 'Møde';
   const date = $('date').value || today();
+  const project = $('project').value.trim();
   return [
     '---',
     `titel: "${title.replace(/["\\]/g, '\\$&')}"`,
     `dato: ${date}`,
+    ...(project ? [`projekt: "${project.replace(/["\\]/g, '\\$&')}"`] : []),
     `kilde: live-tekst via browserens tale-tjeneste (${liveService()}), ikke gennemlæst af assistenten`,
     '---',
     '',
     `# ${title}`,
     '',
     `Dato: ${date}`,
+    ...(project ? [`Projekt: ${project}`] : []),
     '',
     $('text').value.trim(),
     '',
@@ -237,15 +384,33 @@ function slug(text) {
 }
 
 function saveMarkdown() {
-  const date = $('date').value || today();
   const blob = new Blob([buildMarkdown()], { type: 'text/markdown;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `${date}-${slug($('title').value)}.md`;
+  a.download = fileName();
   document.body.append(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
+function fileName() {
+  return `${$('date').value || today()}-${slug($('title').value)}.md`;
+}
+
+// Deler filen via telefonens delingsmenu, fx til OneDrive eller mail.
+async function shareFile() {
+  for (const type of ['text/markdown', 'text/plain']) {
+    const file = new File([buildMarkdown()], fileName(), { type });
+    if (!navigator.canShare?.({ files: [file] })) continue;
+    try {
+      await navigator.share({ files: [file], title: $('title').value.trim() || 'Møde' });
+    } catch (err) {
+      if (err.name !== 'AbortError') alert('Filen kunne ikke deles. Brug «Gem som .md-fil» i stedet.');
+    }
+    return;
+  }
+  alert('Browseren kan ikke dele filen. Brug «Gem som .md-fil» i stedet.');
 }
 
 async function copyText() {
@@ -264,7 +429,8 @@ function updateButtons() {
   const hasText = $('text').value.trim().length > 0;
   $('save-md').disabled = !hasText;
   $('copy').disabled = !hasText;
-  $('reset').disabled = !hasText && !$('title').value.trim();
+  $('share').disabled = !hasText;
+  $('reset').disabled = !hasText && !$('title').value.trim() && !$('project').value.trim();
   const words = countWords($('text').value);
   $('count').textContent = `${words.toLocaleString('da-DK')} ord`;
   scheduleSave();
@@ -290,14 +456,14 @@ function scheduleSave() {
 function saveDraft() {
   clearTimeout(saveTimer);
   try {
-    if (!$('text').value.trim() && !$('title').value.trim()) {
+    if (!$('text').value.trim() && !$('title').value.trim() && !$('project').value.trim()) {
       localStorage.removeItem(DRAFT_KEY);
       return;
     }
-    const draft = { title: $('title').value, date: $('date').value, text: $('text').value, saved: Date.now() };
+    const draft = { title: $('title').value, project: $('project').value, date: $('date').value, text: $('text').value, saved: Date.now() };
     // Uændret udkast beholder sit gamle tidspunkt, så "gendannet fra" er rigtigt.
     const old = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
-    if (old && old.title === draft.title && old.date === draft.date && old.text === draft.text) return;
+    if (old && old.title === draft.title && old.project === draft.project && old.date === draft.date && old.text === draft.text) return;
     localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
   } catch { /* privat vindue eller fuld lagerplads: så virker appen uden udkast */ }
 }
@@ -307,6 +473,7 @@ function restoreDraft() {
     const draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
     if (!draft || (!draft.text?.trim() && !draft.title?.trim())) return;
     $('title').value = draft.title || '';
+    $('project').value = draft.project || '';
     if (draft.date) $('date').value = draft.date;
     $('text').value = draft.text || '';
     const when = new Date(draft.saved).toLocaleString('da-DK', { dateStyle: 'short', timeStyle: 'short' });
@@ -319,6 +486,7 @@ function resetAll() {
   if (live) return;
   if ($('text').value.trim() && !confirm('Teksten og titlen bliver slettet. Har du gemt filen, du skal bruge? Fortsæt?')) return;
   $('title').value = '';
+  $('project').value = '';
   $('text').value = '';
   $('date').value = today();
   $('restored').hidden = true;
@@ -358,6 +526,11 @@ $('save-md').onclick = saveMarkdown;
 $('copy').onclick = copyText;
 $('text').oninput = updateButtons;
 $('title').oninput = updateButtons;
+$('project').oninput = updateButtons;
+$('share').onclick = shareFile;
+document.querySelectorAll('[data-marker]').forEach((b) => { b.onclick = () => addMarker(b.dataset.marker); });
+bindSettings();
+applySettings();
 $('date').onchange = scheduleSave;
 $('reset').onclick = resetAll;
 // Gem med det samme, når appen forlades, så sidste ord ikke går tabt.
@@ -371,6 +544,9 @@ window.addEventListener('beforeunload', (e) => {
 if (!SpeechRecognition) {
   $('live').hidden = true;
   $('live-intro').textContent = 'Live-tekst virker ikke i denne browser. Brug Edge, Chrome eller Safari.';
+}
+if (navigator.canShare?.({ files: [new File(['x'], 'a.md', { type: 'text/plain' })] })) {
+  $('share').hidden = false;
 }
 restoreDraft();
 updateButtons();
