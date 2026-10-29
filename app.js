@@ -3,7 +3,7 @@
 
 // Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se i
 // bunden af siden, om browseren har hentet den nyeste.
-const VERSION = 5;
+const VERSION = 6;
 
 // Browserens indbyggede talegenkendelse. Den er god til dansk, men lyden sendes
 // til browserens leverandør. Derfor spørger appen, før den bruges første gang.
@@ -108,12 +108,30 @@ function addLiveText(state, transcript) {
   if (!/[.!?…]$/.test(t)) t += '.';
   const now = state.elapsed();
   const box = $('text');
+  // Chrome på Android sender den samme sætning flere gange, efterhånden som den
+  // vokser ("Skal", "Skal jeg", "Skal jeg synge"). Er den nye en forlængelse af
+  // den forrige, erstattes den forrige. Er den en ældre, kortere udgave, droppes den.
+  // Det sker kun, hvis ingen har rettet i teksten imens.
+  const norm = t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const last = state.last;
+  if (last && box.value.length === last.end) {
+    if (last.norm.startsWith(norm)) return;
+    if (norm.startsWith(last.norm)) {
+      box.value = box.value.slice(0, last.start) + t;
+      state.last = { norm, start: last.start, end: box.value.length };
+      box.scrollTop = box.scrollHeight;
+      return;
+    }
+  }
   if (state.paragraphStart === null || now - state.paragraphStart >= PARAGRAPH_S) {
     state.paragraphStart = now;
-    box.value += (box.value.trim() ? '\n\n' : '') + `[${clock(now)}] ${t}`;
+    box.value += (box.value.trim() ? '\n\n' : '') + `[${clock(now)}] `;
   } else {
-    box.value += ' ' + t;
+    box.value += ' ';
   }
+  const start = box.value.length;
+  box.value += t;
+  state.last = { norm, start, end: box.value.length };
   box.scrollTop = box.scrollHeight;
   updateButtons();
 }
