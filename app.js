@@ -1,6 +1,10 @@
 // Styrer siden: optagelse, indlæsning af lydfil, opdeling i stykker,
 // fremdrift og at gemme resultatet som en .md-fil.
 
+// Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se i
+// bunden af siden, om browseren har hentet den nyeste.
+const VERSION = 3;
+
 const SAMPLE_RATE = 16000;
 const MAX_CHUNK_S = 30; // Whisper kan højst tage 30 sekunder ad gangen.
 const MIN_CHUNK_S = 20; // Vi leder efter en stille pause mellem 20 og 30 sekunder.
@@ -84,6 +88,7 @@ async function modelIsCached() {
 let recorder = null;
 let recordTimer = null;
 let wakeLock = null;
+let recordGaps = []; // Tidsrum, hvor mikrofonen kan have været slået fra.
 
 async function keepAwake(on) {
   try {
@@ -109,9 +114,39 @@ async function toggleRecording() {
     return;
   }
   const parts = [];
+  const started = Date.now();
+  const elapsed = () => (Date.now() - started) / 1000;
+  recordGaps = [];
+  let gapStart = null;
+  // Telefoner slukker mikrofonen, når appen kommer i baggrunden eller skærmen
+  // slukker. Det kan siden ikke forhindre, men den kan huske, hvornår det skete.
+  const markGap = () => {
+    if (recorder && gapStart === null) gapStart = elapsed();
+  };
+  const endGap = () => {
+    if (gapStart === null) return;
+    recordGaps.push([gapStart, elapsed()]);
+    gapStart = null;
+    showRecordWarning();
+  };
+  const onVisibility = () => {
+    if (document.hidden) {
+      markGap();
+    } else {
+      endGap();
+      keepAwake(true);
+    }
+  };
+  document.addEventListener('visibilitychange', onVisibility);
+  stream.getAudioTracks().forEach((t) => {
+    t.onmute = markGap;
+    t.onunmute = endGap;
+  });
   recorder = new MediaRecorder(stream);
   recorder.ondataavailable = (e) => e.data.size && parts.push(e.data);
   recorder.onstop = () => {
+    endGap();
+    document.removeEventListener('visibilitychange', onVisibility);
     stream.getTracks().forEach((t) => t.stop());
     clearInterval(recordTimer);
     recorder = null;
@@ -124,13 +159,22 @@ async function toggleRecording() {
   };
   recorder.start(1000);
   keepAwake(true);
-  const started = Date.now();
+  $('record-warning').hidden = true;
   $('record').textContent = '■ Stop optagelse';
   $('record').classList.add('recording');
-  const tick = () => showRecordStatus('Optager … ' + clock((Date.now() - started) / 1000));
+  const tick = () => showRecordStatus('Optager … ' + clock(elapsed()));
   tick();
   recordTimer = setInterval(tick, 1000);
   updateButtons();
+}
+
+function showRecordWarning() {
+  if (!recordGaps.length) return;
+  const spans = recordGaps.map(([a, b]) => `${clock(a)}–${clock(b)}`).join(', ');
+  $('record-warning').hidden = false;
+  $('record-warning').textContent =
+    `Advarsel: appen var i baggrunden eller mikrofonen var slået fra (${spans}). `
+    + 'Optagelsen kan mangle lyd i det tidsrum. Hold appen åben med skærmen tændt, mens du optager.';
 }
 
 function showRecordStatus(text) {
@@ -147,6 +191,7 @@ function extensionFor(type) {
 // ---------- Lyd ----------
 
 async function setAudio(blob, name, recorded) {
+  if (!recorded) $('record-warning').hidden = true;
   audioBlob = blob;
   audioName = name;
   audioSamples = null;
@@ -401,6 +446,7 @@ function today() {
 // ---------- Start ----------
 
 $('date').value = today();
+$('version').textContent = `Version ${VERSION}`;
 $('record').onclick = toggleRecording;
 $('file').onchange = (e) => {
   const file = e.target.files[0];

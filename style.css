@@ -10,6 +10,8 @@
   --danger: #b3261e;
   --note-bg: #fff6dd;
   --note-text: #5c4400;
+  --warn-bg: #fde7e5;
+  --warn-text: #8a1c14;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -25,6 +27,8 @@
     --danger: #ff8a80;
     --note-bg: #3a3014;
     --note-text: #f3dc9c;
+    --warn-bg: #3d1a17;
+    --warn-text: #ffb4ab;
     color-scheme: dark;
   }
 }
@@ -74,6 +78,8 @@ button:focus-visible, .button:focus-visible, input:focus-visible, textarea:focus
 }
 
 .note { background: var(--note-bg); color: var(--note-text); padding: 8px 12px; border-radius: 8px; font-size: .95rem; }
+.warning { background: var(--warn-bg); color: var(--warn-text); }
+.version { opacity: .8; }
 .status { color: var(--muted); font-size: .95rem; }
 .hint { color: var(--muted); font-weight: 400; }
 

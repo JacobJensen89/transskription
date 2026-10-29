@@ -1,6 +1,7 @@
 // Gemmer appens egne filer i browseren, så den kan åbnes uden internet.
 // Sprogmodellen gemmes separat af modelbiblioteket selv.
-const CACHE = 'transskription-v2';
+// Tælles op sammen med VERSION i app.js.
+const CACHE = 'transskription-v3';
 const SHELL = [
   './', 'index.html', 'style.css', 'app.js', 'worker.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
@@ -19,20 +20,22 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Egne filer: vis den gemte udgave med det samme og hent en ny i baggrunden.
+// Appens egne filer hentes fra nettet, så man altid får den nyeste udgave.
+// Uden net bruges den gemte. De store filer i vendor/ skifter sjældent og
+// tages derfor direkte fra det gemte.
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== 'GET' || url.origin !== location.origin) return;
   event.respondWith(caches.open(CACHE).then(async (cache) => {
     const cached = await cache.match(event.request, { ignoreSearch: true });
-    const fresh = fetch(event.request).then((res) => {
+    if (cached && url.pathname.includes('/vendor/')) return cached;
+    try {
+      const res = await fetch(event.request);
       if (res.ok) cache.put(event.request, res.clone());
       return res;
-    });
-    if (cached) {
-      event.waitUntil(fresh.catch(() => {}));
-      return cached;
+    } catch (err) {
+      if (cached) return cached;
+      throw err;
     }
-    return fresh;
   }));
 });
