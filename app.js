@@ -3,7 +3,7 @@
 
 // Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se i
 // bunden af siden, om browseren har hentet den nyeste.
-const VERSION = 8;
+const VERSION = 9;
 
 // Browserens indbyggede talegenkendelse. Den er god til dansk, men lyden sendes
 // til browserens leverandør. Derfor spørger appen, før den bruges første gang.
@@ -140,6 +140,7 @@ function addLiveText(state, transcript) {
       box.value = box.value.slice(0, last.start) + t;
       state.last = { norm, start: last.start, end: box.value.length };
       box.scrollTop = box.scrollHeight;
+      updateButtons();
       return;
     }
   }
@@ -263,6 +264,68 @@ function updateButtons() {
   const hasText = $('text').value.trim().length > 0;
   $('save-md').disabled = !hasText;
   $('copy').disabled = !hasText;
+  $('reset').disabled = !hasText && !$('title').value.trim();
+  const words = countWords($('text').value);
+  $('count').textContent = `${words.toLocaleString('da-DK')} ord`;
+  scheduleSave();
+}
+
+// Tidsstempler som [01:08] er ikke ord og tælles ikke med.
+function countWords(text) {
+  return (text.replace(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g, ' ').match(/\S+/g) || []).length;
+}
+
+// ---------- Udkast ----------
+
+// Teksten gemmes løbende i browseren på denne enhed, så den ikke går tabt,
+// hvis appen lukkes. Den sendes ikke nogen steder hen.
+const DRAFT_KEY = 'transskription-udkast';
+let saveTimer = null;
+
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveDraft, 500);
+}
+
+function saveDraft() {
+  clearTimeout(saveTimer);
+  try {
+    if (!$('text').value.trim() && !$('title').value.trim()) {
+      localStorage.removeItem(DRAFT_KEY);
+      return;
+    }
+    const draft = { title: $('title').value, date: $('date').value, text: $('text').value, saved: Date.now() };
+    // Uændret udkast beholder sit gamle tidspunkt, så "gendannet fra" er rigtigt.
+    const old = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
+    if (old && old.title === draft.title && old.date === draft.date && old.text === draft.text) return;
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  } catch { /* privat vindue eller fuld lagerplads: så virker appen uden udkast */ }
+}
+
+function restoreDraft() {
+  try {
+    const draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
+    if (!draft || (!draft.text?.trim() && !draft.title?.trim())) return;
+    $('title').value = draft.title || '';
+    if (draft.date) $('date').value = draft.date;
+    $('text').value = draft.text || '';
+    const when = new Date(draft.saved).toLocaleString('da-DK', { dateStyle: 'short', timeStyle: 'short' });
+    $('restored').hidden = false;
+    $('restored').textContent = `Udkast fra ${when} er gendannet. Nye sætninger kommer bagefter.`;
+  } catch { /* intet udkast */ }
+}
+
+function resetAll() {
+  if (live) return;
+  if ($('text').value.trim() && !confirm('Teksten og titlen bliver slettet. Har du gemt filen, du skal bruge? Fortsæt?')) return;
+  $('title').value = '';
+  $('text').value = '';
+  $('date').value = today();
+  $('restored').hidden = true;
+  $('live-warning').hidden = true;
+  $('live-status').hidden = true;
+  try { localStorage.removeItem(DRAFT_KEY); } catch { /* ikke afgørende */ }
+  updateButtons();
 }
 
 function clock(seconds) {
@@ -294,6 +357,12 @@ $('live').onclick = toggleLive;
 $('save-md').onclick = saveMarkdown;
 $('copy').onclick = copyText;
 $('text').oninput = updateButtons;
+$('title').oninput = updateButtons;
+$('date').onchange = scheduleSave;
+$('reset').onclick = resetAll;
+// Gem med det samme, når appen forlades, så sidste ord ikke går tabt.
+document.addEventListener('visibilitychange', () => document.hidden && saveDraft());
+window.addEventListener('pagehide', saveDraft);
 document.addEventListener('visibilitychange', () => onVisibility(document.hidden));
 window.addEventListener('beforeunload', (e) => {
   if (live || $('text').value.trim()) e.preventDefault();
@@ -303,6 +372,7 @@ if (!SpeechRecognition) {
   $('live').hidden = true;
   $('live-intro').textContent = 'Live-tekst virker ikke i denne browser. Brug Edge, Chrome eller Safari.';
 }
+restoreDraft();
 updateButtons();
 removeOldModel();
 
