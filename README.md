@@ -29,6 +29,9 @@ og private oplysninger først.
 - **Del fil:** på telefonen sender knappen filen via delingsmenuen, fx til OneDrive eller mail.
 - **Indstillinger:** stort begyndelsesbogstav, punktum efter sætninger, *vælg den længste
   udgave* (kan hjælpe, hvis der mangler tekst), skriftstørrelse og lyst eller mørkt udseende.
+- **Udseende:** Matrix (sort med grøn skrift) er standard, med høj kontrast og en skrift
+  som i kode. Det kan skiftes til lyst, mørkt eller *som telefonen*. Den faldende kode i
+  baggrunden står stille, mens der lyttes, og kan slås fra.
 - **Ordtæller, udkast der huskes** og en advarsel, hvis appen har været i baggrunden eller
   ikke hører noget i et minut.
 
