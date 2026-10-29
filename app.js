@@ -3,7 +3,7 @@
 
 // Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se i
 // bunden af siden, om browseren har hentet den nyeste.
-const VERSION = 13;
+const VERSION = 14;
 
 // Browserens indbyggede talegenkendelse. Den er god til dansk, men lyden sendes
 // til browserens leverandør. Derfor spørger appen, før den bruges første gang.
@@ -23,7 +23,7 @@ const SETTINGS_KEY = 'transskription-indstillinger';
 const DEFAULT_SETTINGS = {
   commands: true, capitals: true, period: true, longest: false,
   fontSize: 17, theme: 'terminal', crt: true, boot: true, rain: true, words: '',
-  alarm: true, alarmSecs: 60,
+  alarm: true, alarmSecs: 60, alarmVibrate: true, alarmSound: true,
 };
 let settings = { ...DEFAULT_SETTINGS };
 try {
@@ -51,6 +51,8 @@ function applySettings() {
   $('opt-boot').checked = settings.boot;
   $('opt-alarm').checked = settings.alarm;
   $('opt-alarm-secs').value = String(settings.alarmSecs);
+  $('opt-alarm-vibrate').checked = settings.alarmVibrate;
+  $('opt-alarm-sound').checked = settings.alarmSound;
   $('opt-words').value = settings.words;
   $('font-label').textContent = settings.fontSize + ' px';
   $('text').style.fontSize = settings.fontSize + 'px';
@@ -146,8 +148,16 @@ function bindSettings() {
   $('opt-crt').onchange = () => { settings.crt = $('opt-crt').checked; saveSettings(); applySettings(); };
   $('opt-boot').onchange = () => { settings.boot = $('opt-boot').checked; saveSettings(); };
   $('opt-alarm').onchange = () => { settings.alarm = $('opt-alarm').checked; saveSettings(); };
+  $('opt-alarm-vibrate').onchange = () => { settings.alarmVibrate = $('opt-alarm-vibrate').checked; saveSettings(); };
+  $('opt-alarm-sound').onchange = () => { settings.alarmSound = $('opt-alarm-sound').checked; saveSettings(); };
   $('opt-alarm-secs').onchange = () => { settings.alarmSecs = Number($('opt-alarm-secs').value); saveSettings(); };
-  $('alarm-test').onclick = () => { unlockAudio(); ring(); showAlarmBanner('Prøvealarm. Hørte og mærkede du den?', 'OK'); };
+  $('alarm-test').onclick = async () => {
+    unlockAudio();
+    const r = await ring();
+    const text = `Prøvealarm. Vibration: ${r.vibration}. Lyd: ${r.audio}. Mærkede og hørte du den?`;
+    logEvent(text);
+    showAlarmBanner(text, 'OK');
+  };
   $('alarm-stop').onclick = silenceAlarm;
   $('log-copy').onclick = copyLog;
   $('log-clear').onclick = () => { runLog = []; persistLog(); renderLog(); };
@@ -283,23 +293,40 @@ function unlockAudio() {
   } catch { /* uden lyd, kun vibration */ }
 }
 
-function ring() {
-  try {
-    const ctx = audio.ctx;
-    if (ctx) {
-      [0, 0.35].forEach((delay) => {
+// Giver tilbage, hvad browseren sagde, så prøvealarmen og loggen kan vise det.
+const VIBRATION_PATTERN = [700, 200, 700, 200, 700, 200, 700];
+
+async function ring() {
+  const result = { vibration: 'slået fra', audio: 'slået fra' };
+  if (settings.alarmSound) {
+    try {
+      unlockAudio();
+      const ctx = audio.ctx;
+      await ctx.resume();
+      [[0, 880], [0.4, 660], [0.8, 880]].forEach(([delay, hz]) => {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = 'square';
-        osc.frequency.value = 880;
-        gain.gain.value = 0.15;
+        osc.frequency.value = hz;
+        gain.gain.value = 0.4;
         osc.connect(gain).connect(ctx.destination);
         osc.start(ctx.currentTime + delay);
-        osc.stop(ctx.currentTime + delay + 0.25);
+        osc.stop(ctx.currentTime + delay + 0.3);
       });
+      result.audio = ctx.state === 'running' ? 'afspillet (hvis medielyd ikke er slukket)' : `blokeret af browseren (${ctx.state})`;
+    } catch (err) {
+      result.audio = 'kunne ikke afspilles (' + (err?.name || 'fejl') + ')';
     }
-  } catch { /* uden lyd */ }
-  try { navigator.vibrate?.([300, 150, 300, 150, 300]); } catch { /* uden vibration */ }
+  }
+  if (settings.alarmVibrate) {
+    try {
+      result.vibration = !navigator.vibrate ? 'understøttes ikke af browseren'
+        : navigator.vibrate(VIBRATION_PATTERN) ? 'sendt til telefonen' : 'afvist af browseren';
+    } catch (err) {
+      result.vibration = 'fejl (' + (err?.name || 'ukendt') + ')';
+    }
+  }
+  return result;
 }
 
 function showAlarmBanner(text, buttonLabel) {
@@ -313,8 +340,9 @@ function startAlarm(state, reason) {
   state.alarmOn = true;
   logEvent('Alarm: ' + reason);
   showAlarmBanner(reason, 'Stop alarm');
-  ring();
-  state.alarmTimer = setInterval(ring, ALARM_REPEAT_MS);
+  const sound = () => ring().then((r) => logEvent(`Alarm sendt: vibration ${r.vibration}; lyd ${r.audio}`));
+  sound();
+  state.alarmTimer = setInterval(sound, ALARM_REPEAT_MS);
 }
 
 function stopAlarm(state, why) {
@@ -550,7 +578,7 @@ function stopLive(message) {
   $('live-status').textContent = message || `Stoppet efter ${clock(state.elapsed())}. Læs teksten igennem, før du gemmer.`;
   // Stoppede den af sig selv, skal brugeren have det at vide, også uden at kigge på skærmen.
   if (message && settings.alarm) {
-    ring();
+    ring().then((r) => logEvent(`Alarm sendt: vibration ${r.vibration}; lyd ${r.audio}`));
     showAlarmBanner(message, 'OK');
   }
 }
