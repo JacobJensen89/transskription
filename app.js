@@ -3,7 +3,7 @@
 
 // Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se i
 // bunden af siden, om browseren har hentet den nyeste.
-const VERSION = 11;
+const VERSION = 12;
 
 // Browserens indbyggede talegenkendelse. Den er god til dansk, men lyden sendes
 // til browserens leverandør. Derfor spørger appen, før den bruges første gang.
@@ -22,12 +22,17 @@ let wakeLock = null;
 const SETTINGS_KEY = 'transskription-indstillinger';
 const DEFAULT_SETTINGS = {
   commands: true, capitals: true, period: true, longest: false,
-  fontSize: 17, theme: 'matrix', rain: true, words: '',
+  fontSize: 17, theme: 'terminal', crt: true, boot: true, rain: true, words: '',
 };
 let settings = { ...DEFAULT_SETTINGS };
 try {
-  Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'));
+  const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+  // Version 11 havde Matrix som standard og gemte det sammen med andre indstillinger.
+  // Det er ikke et aktivt valg, så det skifter til det nye standardudseende.
+  if (stored.v !== 2 && stored.theme === 'matrix') delete stored.theme;
+  Object.assign(settings, stored);
 } catch { /* standardindstillinger */ }
+settings.v = 2;
 
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* ikke afgørende */ }
@@ -41,15 +46,48 @@ function applySettings() {
   $('opt-font').value = settings.fontSize;
   $('opt-theme').value = settings.theme;
   $('opt-rain').checked = settings.rain;
+  $('opt-crt').checked = settings.crt;
+  $('opt-boot').checked = settings.boot;
   $('opt-words').value = settings.words;
   $('font-label').textContent = settings.fontSize + ' px';
   $('text').style.fontSize = settings.fontSize + 'px';
   if (settings.theme === 'auto') delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = settings.theme;
+  document.documentElement.dataset.crt = settings.crt ? 'on' : 'off';
   document.querySelector('meta[name="theme-color"]')
-    .setAttribute('content', settings.theme === 'matrix' || settings.theme === 'dark' ? '#000000' : '#1f5f8b');
+    .setAttribute('content', ['terminal', 'matrix', 'dark'].includes(settings.theme) ? '#000000' : '#1f5f8b');
   wordRules = null;
   updateRain();
+}
+
+// ---------- Opstartsskærm ----------
+
+const BOOT_KEY = 'transskription-opstart';
+const BOOT_PAUSE_MS = 30 * 60 * 1000; // Vises højst hvert halve time.
+
+// Kort tekst som i en film. Den dækker skærmen, men tryk går igennem til siden
+// bagved, og den forsvinder af sig selv efter cirka halvandet sekund.
+function runBoot() {
+  const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (settings.theme !== 'terminal' || !settings.boot || calm) return;
+  try {
+    if (Date.now() - Number(localStorage.getItem(BOOT_KEY) || 0) < BOOT_PAUSE_MS) return;
+    localStorage.setItem(BOOT_KEY, String(Date.now()));
+  } catch { /* vis den bare */ }
+  const lines = [
+    `TRANSSKRIPTION OS v${VERSION}.0`,
+    '> mount /dev/mic .............. OK',
+    '> load tale-modul (da-DK) ..... OK',
+    `> tale-tjeneste: ${liveService()} ....... STANDBY`,
+    '> klar_',
+  ];
+  const boot = $('boot');
+  const log = $('boot-log');
+  boot.hidden = false;
+  boot.classList.remove('done');
+  lines.forEach((line, i) => setTimeout(() => { log.textContent += line + '\n'; }, 150 * (i + 1)));
+  setTimeout(() => boot.classList.add('done'), 1300);
+  setTimeout(() => { boot.hidden = true; log.textContent = ''; }, 1700);
 }
 
 // ---------- Matrix-regn ----------
@@ -102,6 +140,8 @@ function bindSettings() {
   $('opt-font').oninput = () => { settings.fontSize = Number($('opt-font').value); saveSettings(); applySettings(); };
   $('opt-theme').onchange = () => { settings.theme = $('opt-theme').value; saveSettings(); applySettings(); };
   $('opt-rain').onchange = () => { settings.rain = $('opt-rain').checked; saveSettings(); updateRain(); };
+  $('opt-crt').onchange = () => { settings.crt = $('opt-crt').checked; saveSettings(); applySettings(); };
+  $('opt-boot').onchange = () => { settings.boot = $('opt-boot').checked; saveSettings(); };
   $('opt-words').oninput = () => { settings.words = $('opt-words').value; wordRules = null; saveSettings(); };
   $('fix-words').onclick = fixWordsInText;
 }
@@ -580,6 +620,7 @@ $('share').onclick = shareFile;
 document.querySelectorAll('[data-marker]').forEach((b) => { b.onclick = () => addMarker(b.dataset.marker); });
 bindSettings();
 applySettings();
+runBoot();
 $('date').onchange = scheduleSave;
 $('reset').onclick = resetAll;
 // Gem med det samme, når appen forlades, så sidste ord ikke går tabt.
