@@ -3,7 +3,7 @@
 
 // Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se i
 // bunden af siden, om browseren har hentet den nyeste.
-const VERSION = 12;
+const VERSION = 13;
 
 // Browserens indbyggede talegenkendelse. Den er god til dansk, men lyden sendes
 // til browserens leverandør. Derfor spørger appen, før den bruges første gang.
@@ -23,6 +23,7 @@ const SETTINGS_KEY = 'transskription-indstillinger';
 const DEFAULT_SETTINGS = {
   commands: true, capitals: true, period: true, longest: false,
   fontSize: 17, theme: 'terminal', crt: true, boot: true, rain: true, words: '',
+  alarm: true, alarmSecs: 60,
 };
 let settings = { ...DEFAULT_SETTINGS };
 try {
@@ -48,6 +49,8 @@ function applySettings() {
   $('opt-rain').checked = settings.rain;
   $('opt-crt').checked = settings.crt;
   $('opt-boot').checked = settings.boot;
+  $('opt-alarm').checked = settings.alarm;
+  $('opt-alarm-secs').value = String(settings.alarmSecs);
   $('opt-words').value = settings.words;
   $('font-label').textContent = settings.fontSize + ' px';
   $('text').style.fontSize = settings.fontSize + 'px';
@@ -142,6 +145,12 @@ function bindSettings() {
   $('opt-rain').onchange = () => { settings.rain = $('opt-rain').checked; saveSettings(); updateRain(); };
   $('opt-crt').onchange = () => { settings.crt = $('opt-crt').checked; saveSettings(); applySettings(); };
   $('opt-boot').onchange = () => { settings.boot = $('opt-boot').checked; saveSettings(); };
+  $('opt-alarm').onchange = () => { settings.alarm = $('opt-alarm').checked; saveSettings(); };
+  $('opt-alarm-secs').onchange = () => { settings.alarmSecs = Number($('opt-alarm-secs').value); saveSettings(); };
+  $('alarm-test').onclick = () => { unlockAudio(); ring(); showAlarmBanner('Prøvealarm. Hørte og mærkede du den?', 'OK'); };
+  $('alarm-stop').onclick = silenceAlarm;
+  $('log-copy').onclick = copyLog;
+  $('log-clear').onclick = () => { runLog = []; persistLog(); renderLog(); };
   $('opt-words').oninput = () => { settings.words = $('opt-words').value; wordRules = null; saveSettings(); };
   $('fix-words').onclick = fixWordsInText;
 }
@@ -213,6 +222,119 @@ function formatSegment(raw) {
   return t;
 }
 
+// ---------- Kørselslog ----------
+
+// Hændelser uden selve teksten, så man bagefter kan se, hvorfor en lang optagelse stoppede.
+const LOG_KEY = 'transskription-log';
+const LOG_MAX = 300;
+let runLog = [];
+try { runLog = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch { runLog = []; }
+let logTimer = null;
+
+function logEvent(msg) {
+  runLog.push({ ts: Date.now(), el: live ? live.elapsed() : null, msg });
+  if (runLog.length > LOG_MAX) runLog.splice(0, runLog.length - LOG_MAX);
+  clearTimeout(logTimer);
+  logTimer = setTimeout(persistLog, 1000);
+  renderLog();
+}
+
+function persistLog() {
+  try { localStorage.setItem(LOG_KEY, JSON.stringify(runLog)); } catch { /* ikke afgørende */ }
+}
+
+function formatLogLine({ ts, el, msg }) {
+  const when = new Date(ts).toLocaleString('da-DK', {
+    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  return `${when}${el === null ? '' : ` [${clock(el)}]`} ${msg}`;
+}
+
+function renderLog() {
+  const view = $('log-view');
+  view.textContent = runLog.length ? runLog.map(formatLogLine).join('\n') : 'Ingen hændelser endnu.';
+  view.scrollTop = view.scrollHeight;
+}
+
+async function copyLog() {
+  const head = `Transskription version ${VERSION}\n${navigator.userAgent}\n\n`;
+  try {
+    await navigator.clipboard.writeText(head + runLog.map(formatLogLine).join('\n'));
+    $('log-copy').textContent = 'Kopieret ✓';
+  } catch {
+    $('log-copy').textContent = 'Kunne ikke kopiere';
+  }
+  setTimeout(() => ($('log-copy').textContent = 'Kopiér log'), 2000);
+}
+
+// ---------- Alarm ----------
+
+// Bip og vibration, hvis der ikke kommer tale, eller genkendelsen ikke kan komme i gang.
+// Den virker kun, mens appen er åben og skærmen tændt. Telefonen sætter JavaScript på pause
+// i baggrunden, og så kan appen hverken måle stilhed eller larme.
+const ALARM_REPEAT_MS = 30000;
+const FAIL_LIMIT = 3; // Så mange hurtige genstarter i træk regnes for en fejl.
+const audio = { ctx: null };
+
+function unlockAudio() {
+  try {
+    audio.ctx ??= new (window.AudioContext || window.webkitAudioContext)();
+    audio.ctx.resume();
+  } catch { /* uden lyd, kun vibration */ }
+}
+
+function ring() {
+  try {
+    const ctx = audio.ctx;
+    if (ctx) {
+      [0, 0.35].forEach((delay) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.value = 880;
+        gain.gain.value = 0.15;
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(ctx.currentTime + delay);
+        osc.stop(ctx.currentTime + delay + 0.25);
+      });
+    }
+  } catch { /* uden lyd */ }
+  try { navigator.vibrate?.([300, 150, 300, 150, 300]); } catch { /* uden vibration */ }
+}
+
+function showAlarmBanner(text, buttonLabel) {
+  $('alarm-text').textContent = text;
+  $('alarm-stop').textContent = buttonLabel;
+  $('live-alarm').hidden = false;
+}
+
+function startAlarm(state, reason) {
+  if (!settings.alarm || state.alarmOn) return;
+  state.alarmOn = true;
+  logEvent('Alarm: ' + reason);
+  showAlarmBanner(reason, 'Stop alarm');
+  ring();
+  state.alarmTimer = setInterval(ring, ALARM_REPEAT_MS);
+}
+
+function stopAlarm(state, why) {
+  if (!state.alarmOn) return;
+  state.alarmOn = false;
+  clearInterval(state.alarmTimer);
+  $('live-alarm').hidden = true;
+  logEvent('Alarm slut: ' + why);
+}
+
+// Knappen i alarmen: slukker den, og lader stilheds-uret begynde forfra.
+function silenceAlarm() {
+  if (live) {
+    live.lastSpeech = Date.now();
+    live.failStreak = 0;
+    stopAlarm(live, 'slukket med knap');
+  }
+  $('live-alarm').hidden = true;
+}
+
 // ---------- Live-tekst ----------
 
 function liveService() {
@@ -235,9 +357,15 @@ function toggleLive() {
   liveAccepted = true;
   gaps = [];
   $('live-warning').hidden = true;
-  const state = { active: true, started: Date.now(), lastSpeech: Date.now(), paragraphStart: null, gapStart: null, timer: null };
+  const state = {
+    active: true, started: Date.now(), lastSpeech: Date.now(), paragraphStart: null, gapStart: null, timer: null,
+    failStreak: 0, restarts: 0, alarmOn: false, alarmTimer: null,
+  };
   state.elapsed = () => (Date.now() - state.started) / 1000;
   live = state;
+  unlockAudio();
+  $('live-alarm').hidden = true;
+  logEvent(`Start (${liveService()}, ${document.hidden ? 'skjult' : 'synlig'}, alarm ${settings.alarm ? settings.alarmSecs + ' s' : 'fra'})`);
   updateRain();
   startRecognition(state);
   keepAwake(true);
@@ -248,7 +376,9 @@ function toggleLive() {
     if (live !== state) return;
     const quiet = (Date.now() - state.lastSpeech) / 1000;
     $('live-status').textContent = 'Lytter … ' + clock(state.elapsed())
-      + (quiet > 60 ? ` · Ingen tale registreret i ${clock(quiet)}. Hører mikrofonen dig?` : '');
+      + (quiet > Math.min(60, settings.alarmSecs) ? ` · Ingen tale registreret i ${clock(quiet)}. Hører mikrofonen dig?` : '');
+    if (quiet >= settings.alarmSecs) startAlarm(state, `Ingen tale i ${clock(quiet)}. Hører mikrofonen dig?`);
+    else if (state.failStreak >= FAIL_LIMIT) startAlarm(state, 'Genkendelsen kommer ikke i gang igen.');
   };
   tick();
   state.timer = setInterval(tick, 1000);
@@ -261,9 +391,14 @@ function startRecognition(state) {
   rec.interimResults = true;
   rec.maxAlternatives = settings.longest ? 5 : 1;
   const startedAt = Date.now();
+  logEvent(state.restarts === 0 ? 'Genkendelse startet' : `Genkendelse startet igen (genstart nr. ${state.restarts})`);
   rec.onresult = (e) => {
     let interim = '';
+    const quiet = (Date.now() - state.lastSpeech) / 1000;
+    if (quiet > 15) logEvent(`Tale igen efter ${clock(quiet)} uden tale`);
     state.lastSpeech = Date.now();
+    state.failStreak = 0;
+    stopAlarm(state, 'tale registreret');
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const r = e.results[i];
       const text = bestAlternative(r);
@@ -274,6 +409,8 @@ function startRecognition(state) {
     $('live-interim').textContent = interim;
   };
   rec.onerror = (e) => {
+    // «no-speech» og «aborted» hører til det normale, når browseren selv lukker.
+    logEvent(`Fejl fra genkendelsen: ${e.error}${e.message ? ' (' + e.message + ')' : ''}`);
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
       state.fatal = 'Browseren har ikke lov til at bruge mikrofonen eller tale-tjenesten. '
         + 'På iPhone: slå Diktering til, eller åbn siden i Safari i stedet for appen.';
@@ -287,13 +424,19 @@ function startRecognition(state) {
   rec.onend = () => {
     $('live-interim').hidden = true;
     if (!state.active) return;
+    const ranFor = (Date.now() - startedAt) / 1000;
+    logEvent(`Genkendelse sluttede efter ${clock(ranFor)}`);
     if (state.fatal) {
       stopLive(state.fatal);
     } else if (document.hidden) {
+      logEvent('Venter med genstart, til appen er synlig igen');
       state.waiting = true;
     } else {
       // Hvis den stoppede med det samme, ventes lidt, så den ikke prøver i ring.
-      setTimeout(() => state.active && startRecognition(state), Date.now() - startedAt < 2000 ? 2000 : 100);
+      const quick = ranFor < 2;
+      state.failStreak = quick ? state.failStreak + 1 : 0;
+      state.restarts++;
+      setTimeout(() => state.active && startRecognition(state), quick ? 2000 : 100);
     }
   };
   state.recognition = rec;
@@ -394,6 +537,8 @@ function stopLive(message) {
   if (!state) return;
   state.active = false;
   onVisibility(false);
+  logEvent(message ? `Stoppet: ${message}` : `Stoppet af brugeren efter ${clock(state.elapsed())}`);
+  stopAlarm(state, 'live-tekst stoppet');
   live = null;
   clearInterval(state.timer);
   // stop() i stedet for abort(), så den sidste sætning når at komme med.
@@ -403,6 +548,11 @@ function stopLive(message) {
   $('live').classList.remove('recording');
   updateRain();
   $('live-status').textContent = message || `Stoppet efter ${clock(state.elapsed())}. Læs teksten igennem, før du gemmer.`;
+  // Stoppede den af sig selv, skal brugeren have det at vide, også uden at kigge på skærmen.
+  if (message && settings.alarm) {
+    ring();
+    showAlarmBanner(message, 'OK');
+  }
 }
 
 // Telefoner slukker mikrofonen i baggrunden. Husk hvornår, og start igen bagefter.
@@ -410,8 +560,10 @@ function onVisibility(hidden) {
   const state = live;
   if (!state) return;
   if (hidden) {
+    if (state.gapStart === null) logEvent('Appen skjult (baggrund eller slukket skærm)');
     state.gapStart ??= state.elapsed();
   } else {
+    if (state.gapStart !== null) logEvent('Appen synlig igen');
     keepAwake(true);
     if (state.gapStart !== null) {
       gaps.push([state.gapStart, state.elapsed()]);
@@ -433,11 +585,35 @@ function showWarning() {
     + 'Hold appen åben med skærmen tændt, mens der tales.';
 }
 
+// Beder telefonen holde skærmen tændt. wantAwake sikrer, at en forespørgsel, der først
+// besvares efter «stop», bliver frigivet igen i stedet for at holde skærmen tændt.
+let wantAwake = false;
+
 async function keepAwake(on) {
+  wantAwake = on;
   try {
-    if (on && 'wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
-    if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
-  } catch { /* ikke afgørende */ }
+    if (on) {
+      if (!('wakeLock' in navigator) || (wakeLock && !wakeLock.released)) return;
+      const lock = await navigator.wakeLock.request('screen');
+      if (!wantAwake) {
+        await lock.release();
+        return;
+      }
+      wakeLock = lock;
+      logEvent('Skærmlås tændt');
+      lock.addEventListener('release', () => {
+        if (wakeLock !== lock) return;
+        wakeLock = null;
+        if (live) logEvent('Skærmlås frigivet af telefonen (skærmen kan være slukket)');
+      });
+    } else if (wakeLock) {
+      const lock = wakeLock;
+      wakeLock = null;
+      await lock.release();
+    }
+  } catch (err) {
+    if (live) logEvent('Skærmlås kunne ikke tændes: ' + err.name);
+  }
 }
 
 // ---------- Gem ----------
@@ -620,6 +796,10 @@ $('share').onclick = shareFile;
 document.querySelectorAll('[data-marker]').forEach((b) => { b.onclick = () => addMarker(b.dataset.marker); });
 bindSettings();
 applySettings();
+renderLog();
+window.addEventListener('online', () => logEvent('Netværk: online'));
+window.addEventListener('offline', () => logEvent('Netværk: offline'));
+window.addEventListener('pagehide', persistLog);
 runBoot();
 $('date').onchange = scheduleSave;
 $('reset').onclick = resetAll;

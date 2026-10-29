@@ -34,6 +34,15 @@ og private oplysninger først.
   skærmlinjer og opstartsskærm kan slås fra under Indstillinger. *Matrix* har faldende
   kode i baggrunden, som står stille, mens der lyttes. Lyst, mørkt og *som telefonen*
   findes også.
+- **Alarm:** Kommer der ikke tale i et minut (kan sættes fra 30 sekunder til 5 minutter),
+  eller kan genkendelsen ikke komme i gang igen, eller stopper den på grund af en fejl,
+  vibrerer telefonen og bipper, og en rød bjælke forklarer hvorfor. Alarmen gentages hvert
+  halve minut, til der kommer tale, eller du trykker *Stop alarm*. *Prøv alarmen* under
+  Indstillinger viser, om lyd og vibration virker. Den virker kun, mens appen er åben og
+  skærmen tændt, for i baggrunden sætter telefonen siden på pause.
+- **Kørselslog** (Indstillinger): tidspunkter for start, stop, genstarter, fejl, skærmlås,
+  netværk og alarmer, uden selve teksten. Brug *Kopiér log*, hvis en lang optagelse stoppede
+  uventet.
 - **Ordtæller, udkast der huskes** og en advarsel, hvis appen har været i baggrunden eller
   ikke hører noget i et minut.
 

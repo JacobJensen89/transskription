@@ -31,6 +31,10 @@
       <p id="live-status" class="status" hidden></p>
       <p id="live-interim" class="interim" hidden></p>
       <p id="live-warning" class="note warning" role="alert" hidden></p>
+      <div id="live-alarm" class="note warning alarm" role="alert" hidden>
+        <span id="alarm-text"></span>
+        <button type="button" class="small" id="alarm-stop">Stop alarm</button>
+      </div>
       <div class="row markers">
         <span class="hint">Markér i teksten:</span>
         <button type="button" class="secondary small" data-marker="Beslutning">Beslutning</button>
@@ -89,6 +93,20 @@
           <option value="dark">Mørkt</option>
         </select>
       </label>
+      <label class="check"><input type="checkbox" id="opt-alarm">
+        <span>Alarm ved stilhed eller fejl<small>Vibration og bip, hvis der ikke kommer tale, eller genkendelsen ikke kan komme i gang. Virker kun, mens appen er åben og skærmen tændt.</small></span></label>
+      <label class="field">Alarm efter så lang tid uden tale
+        <select id="opt-alarm-secs">
+          <option value="30">30 sekunder</option>
+          <option value="60">1 minut</option>
+          <option value="90">1½ minut</option>
+          <option value="120">2 minutter</option>
+          <option value="300">5 minutter</option>
+        </select>
+      </label>
+      <div class="row">
+        <button type="button" class="secondary" id="alarm-test">Prøv alarmen</button>
+      </div>
       <label class="check"><input type="checkbox" id="opt-crt">
         <span>Skærmlinjer og glød<small>Kun i Terminal-udseendet. Slå fra, hvis teksten er svær at læse.</small></span></label>
       <label class="check"><input type="checkbox" id="opt-boot">
@@ -103,6 +121,15 @@
         <button type="button" class="secondary" id="fix-words">Ret egne ord i hele teksten</button>
       </div>
       <p id="fix-result" class="status" hidden></p>
+      <details class="commands" id="log-box">
+        <summary>Kørselslog</summary>
+        <p class="status">Tidspunkter for start, stop, genstart og fejl. Selve teksten står ikke i loggen. Den hjælper, hvis en lang optagelse stoppede, og du vil se hvorfor.</p>
+        <pre id="log-view" tabindex="0"></pre>
+        <div class="row">
+          <button type="button" class="secondary small" id="log-copy">Kopiér log</button>
+          <button type="button" class="secondary small" id="log-clear">Ryd log</button>
+        </div>
+      </details>
       <details class="commands">
         <summary>Stemmekommandoer (kan slås fra)</summary>
         <table>

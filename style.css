@@ -272,3 +272,15 @@ code { background: var(--accent-soft); padding: 1px 6px; border-radius: 4px; }
   padding: 28px 18px; pointer-events: none; transition: opacity .35s; }
 #boot pre { margin: 0; font: 15px/1.7 ui-monospace, "SF Mono", Menlo, Consolas, monospace; white-space: pre-wrap; text-shadow: 0 0 4px rgba(70, 255, 70, .5); }
 #boot.done { opacity: 0; }
+
+.alarm { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.alarm #alarm-text { flex: 1 1 12rem; min-width: 0; }
+.alarm::before { flex: none; }
+.alarm button { flex: none; margin-left: auto; }
+#log-view { max-height: 260px; overflow: auto; margin: 8px 0; padding: 8px; white-space: pre-wrap; word-break: break-word;
+  font: .8rem/1.5 ui-monospace, Menlo, Consolas, monospace; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); user-select: text; }
+@media (prefers-reduced-motion: no-preference) {
+  .alarm:not([hidden]) { animation: alarm-pulse 1.2s ease-in-out infinite; }
+}
+@keyframes alarm-pulse { 50% { box-shadow: 0 0 0 3px var(--danger); } }
