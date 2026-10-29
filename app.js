@@ -3,7 +3,7 @@
 
 // Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se i
 // bunden af siden, om browseren har hentet den nyeste.
-const VERSION = 10;
+const VERSION = 11;
 
 // Browserens indbyggede talegenkendelse. Den er god til dansk, men lyden sendes
 // til browserens leverandør. Derfor spørger appen, før den bruges første gang.
@@ -22,7 +22,7 @@ let wakeLock = null;
 const SETTINGS_KEY = 'transskription-indstillinger';
 const DEFAULT_SETTINGS = {
   commands: true, capitals: true, period: true, longest: false,
-  fontSize: 17, theme: 'auto', words: '',
+  fontSize: 17, theme: 'matrix', rain: true, words: '',
 };
 let settings = { ...DEFAULT_SETTINGS };
 try {
@@ -40,12 +40,58 @@ function applySettings() {
   $('opt-longest').checked = settings.longest;
   $('opt-font').value = settings.fontSize;
   $('opt-theme').value = settings.theme;
+  $('opt-rain').checked = settings.rain;
   $('opt-words').value = settings.words;
   $('font-label').textContent = settings.fontSize + ' px';
   $('text').style.fontSize = settings.fontSize + 'px';
   if (settings.theme === 'auto') delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = settings.theme;
+  document.querySelector('meta[name="theme-color"]')
+    .setAttribute('content', settings.theme === 'matrix' || settings.theme === 'dark' ? '#000000' : '#1f5f8b');
   wordRules = null;
+  updateRain();
+}
+
+// ---------- Matrix-regn ----------
+
+// Tegnene falder i baggrunden bag kortene. Den står stille, mens der lyttes, når
+// siden er skjult, eller hvis telefonen er sat til færre animationer.
+const RAIN_CHARS = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789';
+const RAIN_SIZE = 16;
+const rain = { timer: null, drops: [], ctx: $('rain').getContext('2d') };
+
+function resizeRain() {
+  const canvas = $('rain');
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  rain.drops = Array.from({ length: Math.ceil(canvas.width / RAIN_SIZE) }, () => Math.random() * -50);
+  rain.ctx.fillStyle = '#000';
+  rain.ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+function drawRain() {
+  const { ctx } = rain;
+  const { width, height } = $('rain');
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = '#00ff41';
+  ctx.font = `${RAIN_SIZE}px monospace`;
+  rain.drops.forEach((y, i) => {
+    ctx.fillText(RAIN_CHARS[Math.floor(Math.random() * RAIN_CHARS.length)], i * RAIN_SIZE, y * RAIN_SIZE);
+    rain.drops[i] = y * RAIN_SIZE > height && Math.random() > 0.975 ? 0 : y + 1;
+  });
+}
+
+function updateRain() {
+  const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const want = settings.theme === 'matrix' && settings.rain && !live && !document.hidden && !calm;
+  if (want && !rain.timer) {
+    if (!rain.drops.length) resizeRain();
+    rain.timer = setInterval(drawRain, 90);
+  } else if (!want && rain.timer) {
+    clearInterval(rain.timer);
+    rain.timer = null;
+  }
 }
 
 function bindSettings() {
@@ -55,6 +101,7 @@ function bindSettings() {
   }
   $('opt-font').oninput = () => { settings.fontSize = Number($('opt-font').value); saveSettings(); applySettings(); };
   $('opt-theme').onchange = () => { settings.theme = $('opt-theme').value; saveSettings(); applySettings(); };
+  $('opt-rain').onchange = () => { settings.rain = $('opt-rain').checked; saveSettings(); updateRain(); };
   $('opt-words').oninput = () => { settings.words = $('opt-words').value; wordRules = null; saveSettings(); };
   $('fix-words').onclick = fixWordsInText;
 }
@@ -151,6 +198,7 @@ function toggleLive() {
   const state = { active: true, started: Date.now(), lastSpeech: Date.now(), paragraphStart: null, gapStart: null, timer: null };
   state.elapsed = () => (Date.now() - state.started) / 1000;
   live = state;
+  updateRain();
   startRecognition(state);
   keepAwake(true);
   $('live').textContent = '■ Stop live-tekst';
@@ -313,6 +361,7 @@ function stopLive(message) {
   keepAwake(false);
   $('live').textContent = '🎙 Start live-tekst';
   $('live').classList.remove('recording');
+  updateRain();
   $('live-status').textContent = message || `Stoppet efter ${clock(state.elapsed())}. Læs teksten igennem, før du gemmer.`;
 }
 
@@ -536,7 +585,8 @@ $('reset').onclick = resetAll;
 // Gem med det samme, når appen forlades, så sidste ord ikke går tabt.
 document.addEventListener('visibilitychange', () => document.hidden && saveDraft());
 window.addEventListener('pagehide', saveDraft);
-document.addEventListener('visibilitychange', () => onVisibility(document.hidden));
+document.addEventListener('visibilitychange', () => { onVisibility(document.hidden); updateRain(); });
+window.addEventListener('resize', () => { if (rain.drops.length) { resizeRain(); } });
 window.addEventListener('beforeunload', (e) => {
   if (live || $('text').value.trim()) e.preventDefault();
 });

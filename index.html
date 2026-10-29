@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Transskription</title>
   <meta name="description" content="Omsæt dansk tale fra møder til tekst, live, og gem den som en .md-fil.">
-  <meta name="theme-color" content="#1f5f8b">
+  <meta name="theme-color" content="#000000">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -13,6 +13,7 @@
   <script type="module" src="app.js"></script>
 </head>
 <body>
+  <canvas id="rain" aria-hidden="true"></canvas>
   <main>
     <header>
       <h1>Transskription</h1>
@@ -80,11 +81,14 @@
       </label>
       <label class="field">Udseende
         <select id="opt-theme">
+          <option value="matrix">Matrix (sort og grøn)</option>
           <option value="auto">Som telefonen</option>
           <option value="light">Lyst</option>
           <option value="dark">Mørkt</option>
         </select>
       </label>
+      <label class="check"><input type="checkbox" id="opt-rain">
+        <span>Matrix-regn i baggrunden<small>Står stille, mens der lyttes, så den ikke forstyrrer eller bruger strøm.</small></span></label>
       <label class="field">Egne ord <span class="hint">(ét ord pr. linje: <code>forkert = rigtigt</code>)</span>
         <textarea id="opt-words" rows="5" placeholder="øjen = Jørgen&#10;søren = Søren"></textarea>
       </label>
