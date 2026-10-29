@@ -3,7 +3,7 @@
 
 // Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se i
 // bunden af siden, om browseren har hentet den nyeste.
-const VERSION = 7;
+const VERSION = 8;
 
 // Browserens indbyggede talegenkendelse. Den er god til dansk, men lyden sendes
 // til browserens leverandør. Derfor spørger appen, før den bruges første gang.
@@ -101,6 +101,26 @@ function startRecognition(state) {
   }
 }
 
+// Google retter nogle gange en sætning, efter den er sendt som endelig, fx ved at
+// tilføje et ord eller skifte store og små bogstaver. Så er den nye ikke en ren
+// forlængelse af den gamle, men de to har næsten alle ord til fælles i samme
+// rækkefølge. Sætninger under fire ord sammenlignes ikke, så korte svar som
+// "Ja" og "Nej" ikke bliver slået sammen.
+function mostlySame(a, b) {
+  const x = a.split(' ');
+  const y = b.split(' ');
+  if (Math.min(x.length, y.length) < 4) return false;
+  let prev = new Array(y.length + 1).fill(0);
+  for (let i = 1; i <= x.length; i++) {
+    const cur = [0];
+    for (let j = 1; j <= y.length; j++) {
+      cur[j] = x[i - 1] === y[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
+    }
+    prev = cur;
+  }
+  return prev[y.length] / Math.min(x.length, y.length) >= 0.75;
+}
+
 function addLiveText(state, transcript) {
   let t = transcript.trim();
   if (!t) return;
@@ -116,7 +136,7 @@ function addLiveText(state, transcript) {
   const last = state.last;
   if (last && box.value.length === last.end) {
     if (last.norm.startsWith(norm)) return;
-    if (norm.startsWith(last.norm)) {
+    if (norm.startsWith(last.norm) || mostlySame(last.norm, norm)) {
       box.value = box.value.slice(0, last.start) + t;
       state.last = { norm, start: last.start, end: box.value.length };
       box.scrollTop = box.scrollHeight;
