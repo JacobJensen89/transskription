@@ -1,7 +1,7 @@
 // Gemmer appens egne filer i browseren, så den kan åbnes uden internet.
 // Sprogmodellen gemmes separat af modelbiblioteket selv.
 // Tælles op sammen med VERSION i app.js.
-const CACHE = 'transskription-v3';
+const CACHE = 'transskription-v4';
 const SHELL = [
   './', 'index.html', 'style.css', 'app.js', 'worker.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',

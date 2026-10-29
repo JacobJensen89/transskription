@@ -3,7 +3,7 @@
 
 // Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se i
 // bunden af siden, om browseren har hentet den nyeste.
-const VERSION = 3;
+const VERSION = 4;
 
 const SAMPLE_RATE = 16000;
 const MAX_CHUNK_S = 30; // Whisper kan højst tage 30 sekunder ad gangen.
@@ -20,6 +20,7 @@ let audioName = '';
 let audioSamples = null;
 let cancelRequested = false;
 let busy = false;
+let textSource = 'local'; // 'local' eller 'live', skrives i .md-filen.
 
 // ---------- Sprogmodel ----------
 
@@ -305,6 +306,7 @@ async function transcribe() {
   $('tx-progress').hidden = false;
   $('tx-status').hidden = false;
 
+  textSource = 'local';
   const bounds = chunkBounds(audioSamples);
   const started = performance.now();
   let failed = null;
@@ -358,6 +360,148 @@ function appendText(line) {
   updateButtons();
 }
 
+// ---------- Live-tekst ----------
+
+// Browserens indbyggede talegenkendelse. Den er god til dansk, men lyden sendes
+// til browserens leverandør. Derfor spørger appen, før den bruges første gang.
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const PARAGRAPH_S = 60; // Nyt afsnit med tidsstempel cirka hvert minut.
+let live = null;
+let liveAccepted = false;
+
+function liveService() {
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad|Macintosh/.test(ua) && !/Chrome|Edg/.test(ua)) return 'Apple';
+  if (/iPhone|iPad/.test(ua)) return 'Apple';
+  if (/Edg\//.test(ua)) return 'Microsoft';
+  return 'Google';
+}
+
+function toggleLive() {
+  if (live) {
+    stopLive();
+    return;
+  }
+  if (!liveAccepted && !confirm(
+    `Live-tekst sender lyden til ${liveService()}, som laver den om til tekst. `
+    + 'Brug den kun, når det er i orden at lyden forlader computeren. Fortsæt?',
+  )) return;
+  liveAccepted = true;
+  textSource = 'live';
+  recordGaps = [];
+  $('record-warning').hidden = true;
+  const state = { active: true, started: Date.now(), paragraphStart: null, gapStart: null, timer: null };
+  state.elapsed = () => (Date.now() - state.started) / 1000;
+  live = state;
+  startRecognition(state);
+  keepAwake(true);
+  $('live').textContent = '■ Stop live-tekst';
+  $('live').classList.add('recording');
+  $('live-status').hidden = false;
+  const tick = () => {
+    if (live === state) $('live-status').textContent = 'Lytter … ' + clock(state.elapsed());
+  };
+  tick();
+  state.timer = setInterval(tick, 1000);
+  updateButtons();
+}
+
+function startRecognition(state) {
+  const rec = new SpeechRecognition();
+  rec.lang = 'da-DK';
+  rec.continuous = true;
+  rec.interimResults = true;
+  const startedAt = Date.now();
+  rec.onresult = (e) => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) addLiveText(state, r[0].transcript);
+      else interim += r[0].transcript;
+    }
+    $('live-interim').hidden = !interim;
+    $('live-interim').textContent = interim;
+  };
+  rec.onerror = (e) => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      state.fatal = 'Browseren har ikke lov til at bruge mikrofonen eller tale-tjenesten.';
+    } else if (e.error === 'language-not-supported') {
+      state.fatal = 'Browseren kan ikke genkende dansk.';
+    } else if (e.error === 'network') {
+      $('live-status').textContent = 'Ingen forbindelse til tale-tjenesten. Prøver igen …';
+    }
+  };
+  // Browseren stopper selv efter en pause eller nogle minutter. Så startes den igen.
+  rec.onend = () => {
+    $('live-interim').hidden = true;
+    if (!state.active) return;
+    if (state.fatal) {
+      stopLive(state.fatal);
+    } else if (document.hidden) {
+      state.waiting = true;
+    } else {
+      // Hvis den stoppede med det samme, ventes lidt, så den ikke prøver i ring.
+      setTimeout(() => state.active && startRecognition(state), Date.now() - startedAt < 2000 ? 2000 : 100);
+    }
+  };
+  state.recognition = rec;
+  try {
+    rec.start();
+  } catch (err) {
+    stopLive('Live-tekst kunne ikke starte: ' + err.message);
+  }
+}
+
+function addLiveText(state, transcript) {
+  let t = transcript.trim();
+  if (!t) return;
+  t = t[0].toUpperCase() + t.slice(1);
+  if (!/[.!?…]$/.test(t)) t += '.';
+  const now = state.elapsed();
+  const box = $('text');
+  if (state.paragraphStart === null || now - state.paragraphStart >= PARAGRAPH_S) {
+    state.paragraphStart = now;
+    box.value += (box.value.trim() ? '\n\n' : '') + `[${clock(now)}] ${t}`;
+  } else {
+    box.value += ' ' + t;
+  }
+  box.scrollTop = box.scrollHeight;
+  updateButtons();
+}
+
+function stopLive(message) {
+  const state = live;
+  if (!state) return;
+  state.active = false;
+  liveVisibility(false);
+  live = null;
+  clearInterval(state.timer);
+  // stop() i stedet for abort(), så den sidste sætning når at komme med.
+  try { state.recognition?.stop(); } catch { /* allerede stoppet */ }
+  keepAwake(false);
+  $('live').textContent = '🎙 Start live-tekst';
+  $('live').classList.remove('recording');
+  $('live-status').textContent = message || `Stoppet efter ${clock(state.elapsed())}. Læs teksten igennem, før du gemmer.`;
+  updateButtons();
+}
+
+// Telefoner slukker mikrofonen i baggrunden. Husk hvornår, og start igen bagefter.
+function liveVisibility(hidden) {
+  const state = live;
+  if (!state) return;
+  if (hidden) {
+    state.gapStart ??= state.elapsed();
+  } else if (state.gapStart !== null) {
+    recordGaps.push([state.gapStart, state.elapsed()]);
+    state.gapStart = null;
+    showRecordWarning();
+  }
+  if (!hidden && state.waiting && state.active) {
+    state.waiting = false;
+    startRecognition(state);
+  }
+}
+
 // ---------- Gem ----------
 
 function buildMarkdown() {
@@ -367,7 +511,9 @@ function buildMarkdown() {
     '---',
     `titel: "${title.replace(/["\\]/g, '\\$&')}"`,
     `dato: ${date}`,
-    'kilde: automatisk transskription, ikke gennemlæst af assistenten',
+    textSource === 'live'
+      ? `kilde: live-tekst via browserens tale-tjeneste (${liveService()}), ikke gennemlæst af assistenten`
+      : 'kilde: automatisk transskription på egen computer (whisper-small), ikke gennemlæst af assistenten',
     '---',
     '',
     `# ${title}`,
@@ -417,9 +563,10 @@ async function copyText() {
 
 function updateButtons() {
   const hasText = $('text').value.trim().length > 0;
-  $('transcribe').disabled = !modelReady || !audioSamples || busy || !!recorder;
-  $('record').disabled = busy;
-  $('file').disabled = busy || !!recorder;
+  $('transcribe').disabled = !modelReady || !audioSamples || busy || !!recorder || !!live;
+  $('record').disabled = busy || !!live;
+  $('file').disabled = busy || !!recorder || !!live;
+  $('live').disabled = busy || !!recorder;
   $('save-md').disabled = !hasText || busy;
   $('copy').disabled = !hasText;
   $('transcribe').title = !modelReady ? 'Sprogmodellen er ikke klar endnu'
@@ -463,9 +610,16 @@ $('cancel').onclick = () => {
 $('save-md').onclick = saveMarkdown;
 $('copy').onclick = copyText;
 $('text').oninput = updateButtons;
+$('live').onclick = toggleLive;
+document.addEventListener('visibilitychange', () => liveVisibility(document.hidden));
 window.addEventListener('beforeunload', (e) => {
-  if (busy || recorder || $('text').value.trim()) e.preventDefault();
+  if (busy || recorder || live || $('text').value.trim()) e.preventDefault();
 });
+
+if (!SpeechRecognition) {
+  $('live').hidden = true;
+  $('live-intro').textContent = 'Live-tekst virker ikke i denne browser. Brug Edge eller Chrome.';
+}
 
 if (!window.MediaRecorder) $('record').hidden = true;
 
