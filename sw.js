@@ -1,6 +1,6 @@
 // Gemmer appens egne filer i browseren, så den åbner hurtigt.
 // Tælles op sammen med VERSION i app.js.
-const CACHE = 'transskription-v12';
+const CACHE = 'transskription-v13';
 const SHELL = [
   './', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
