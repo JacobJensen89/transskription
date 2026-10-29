@@ -38,7 +38,8 @@ og private oplysninger først.
   eller kan genkendelsen ikke komme i gang igen, eller stopper den på grund af en fejl,
   vibrerer telefonen og bipper, og en rød bjælke forklarer hvorfor. Alarmen gentages hvert
   halve minut, til der kommer tale, eller du trykker *Stop alarm*. *Prøv alarmen* under
-  Indstillinger viser, om lyd og vibration virker. Den virker kun, mens appen er åben og
+  Indstillinger viser, om lyd og vibration virker, og hvad browseren svarede. Vibration og lyd
+  kan slås til og fra hver for sig. Den virker kun, mens appen er åben og
   skærmen tændt, for i baggrunden sætter telefonen siden på pause.
 - **Kørselslog** (Indstillinger): tidspunkter for start, stop, genstarter, fejl, skærmlås,
   netværk og alarmer, uden selve teksten. Brug *Kopiér log*, hvis en lang optagelse stoppede
