@@ -4,7 +4,8 @@
 const SAMPLE_RATE = 16000;
 const MAX_CHUNK_S = 30; // Whisper kan højst tage 30 sekunder ad gangen.
 const MIN_CHUNK_S = 20; // Vi leder efter en stille pause mellem 20 og 30 sekunder.
-const SILENCE_RMS = 0.003; // Stykker under denne lydstyrke springes over.
+const SILENCE_RMS = 0.0005; // Kun næsten helt tavse stykker springes over.
+const MAX_GAIN = 30; // Svag lyd forstærkes højst 30 gange.
 
 const $ = (id) => document.getElementById(id);
 
@@ -98,7 +99,11 @@ async function toggleRecording() {
   }
   let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Browserens støjfjernelse er lavet til videoopkald. Den kan skrue næsten
+    // helt ned for stemmer i et mødelokale, så den slås fra. Modellen klarer selv støj.
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
   } catch {
     showRecordStatus('Mikrofonen kunne ikke åbnes. Tjek at browseren har lov til at bruge den.');
     return;
@@ -203,6 +208,15 @@ function chunkBounds(samples) {
   return bounds;
 }
 
+// Skruer op for svag lyd, så det højeste punkt i stykket når 0,9.
+function normalize(samples) {
+  let peak = 0;
+  for (let i = 0; i < samples.length; i++) peak = Math.max(peak, Math.abs(samples[i]));
+  const gain = Math.min(MAX_GAIN, 0.9 / Math.max(peak, 1e-9));
+  if (gain > 1) for (let i = 0; i < samples.length; i++) samples[i] *= gain;
+  return samples;
+}
+
 function rms(samples) {
   let sum = 0;
   for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
@@ -249,15 +263,20 @@ async function transcribe() {
   const bounds = chunkBounds(audioSamples);
   const started = performance.now();
   let failed = null;
+  let empty = 0;
   try {
     for (let i = 0; i < bounds.length; i++) {
       if (cancelRequested) break;
       showTxProgress(i, bounds.length, started);
       const [a, b] = bounds[i];
       const chunk = audioSamples.slice(a, b);
-      if (rms(chunk) < SILENCE_RMS) continue;
-      const text = cleanText(await transcribeChunk(chunk));
+      if (rms(chunk) < SILENCE_RMS) {
+        empty++;
+        continue;
+      }
+      const text = cleanText(await transcribeChunk(normalize(chunk)));
       if (text) appendText(`[${clock(a / SAMPLE_RATE)}] ${text}`);
+      else empty++;
     }
   } catch (err) {
     failed = err;
@@ -272,7 +291,8 @@ async function transcribe() {
     ? 'Noget gik galt: ' + failed.message
     : cancelRequested
       ? `Stoppet. Teksten indtil nu er bevaret (${used}).`
-      : `Færdig på ${used}. Læs teksten igennem, før du gemmer.`;
+      : `Færdig på ${used}. Læs teksten igennem, før du gemmer.`
+        + (empty ? ` ${empty} af ${bounds.length} stykker gav ingen tekst.` : '');
   updateButtons();
 }
 
