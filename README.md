@@ -16,6 +16,22 @@ Giv filen til assistenten i vidensbasen. **Læg den aldrig selv ind i vidensbase
 repo**, for alt, der kommer i git, bliver der for altid. Assistenten tjekker for navne
 og private oplysninger først.
 
+## Funktioner
+
+- **Stemmekommandoer:** sig *punktum, komma, kolon, semikolon, udråbstegn, spørgsmålstegn,
+  ny linje* eller *nyt afsnit*, så skrives tegnet i stedet for ordet.
+- **Egne ord:** under *Indstillinger* kan du skrive `øjen = Jørgen`, så rettes navne, som
+  tale-tjenesten hører forkert, mens der tales. Knappen *Ret egne ord i hele teksten*
+  retter det, der allerede står der.
+- **Markeringer:** knapperne *Beslutning*, *Handling* og *Vigtigt* sætter en fed
+  overskrift med tidsstempel ind i teksten, så de er lette at finde bagefter.
+- **Projekt:** feltet kommer med i `.md`-filen, så assistenten kan sortere den.
+- **Del fil:** på telefonen sender knappen filen via delingsmenuen, fx til OneDrive eller mail.
+- **Indstillinger:** stort begyndelsesbogstav, punktum efter sætninger, *vælg den længste
+  udgave* (kan hjælpe, hvis der mangler tekst), skriftstørrelse og lyst eller mørkt udseende.
+- **Ordtæller, udkast der huskes** og en advarsel, hvis appen har været i baggrunden eller
+  ikke hører noget i et minut.
+
 ## Hvor lyden sendes hen
 
 Appen bruger browserens indbyggede talegenkendelse, som er den samme som i
