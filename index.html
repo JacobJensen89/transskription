@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Transskription</title>
+  <meta name="description" content="Omsæt dansk tale fra møder til tekst. Alt foregår på din egen computer.">
+  <meta name="theme-color" content="#1f5f8b">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Transskription</h1>
+      <p class="lead">Omsæt tale fra møder til tekst. Lyd og tekst bliver på denne computer.</p>
+    </header>
+
+    <section class="card" id="model-card">
+      <h2><span class="step">1</span> Sprogmodel</h2>
+      <p id="model-status">Tjekker …</p>
+      <div class="progress" id="model-progress" hidden><div class="bar"></div></div>
+      <button type="button" id="load-model" hidden>Hent sprogmodel</button>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">2</span> Lyd</h2>
+      <p class="note">Husk at spørge deltagerne om lov, før du optager et møde.</p>
+      <div class="row">
+        <button type="button" id="record">● Optag</button>
+        <label class="button secondary" for="file">Vælg lydfil</label>
+        <input type="file" id="file" accept="audio/*,video/*" hidden>
+      </div>
+      <p id="record-status" class="status" hidden></p>
+      <div id="audio-box" hidden>
+        <audio id="player" controls></audio>
+        <p id="audio-info" class="status"></p>
+        <button type="button" class="secondary" id="save-audio" hidden>Gem lydfilen</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">3</span> Oplysninger</h2>
+      <label class="field">Titel
+        <input type="text" id="title" placeholder="Fx Projektmøde om ny cykelsti" autocomplete="off">
+      </label>
+      <label class="field">Dato
+        <input type="date" id="date">
+      </label>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">4</span> Omsæt til tekst</h2>
+      <div class="row">
+        <button type="button" id="transcribe" disabled>Omsæt til tekst</button>
+        <button type="button" class="secondary" id="cancel" hidden>Stop</button>
+      </div>
+      <div class="progress" id="tx-progress" hidden><div class="bar"></div></div>
+      <p id="tx-status" class="status" hidden></p>
+      <label class="field">Tekst <span class="hint">(du kan rette i den)</span>
+        <textarea id="text" rows="14" placeholder="Teksten kommer her, stykke for stykke."></textarea>
+      </label>
+      <div class="row">
+        <button type="button" id="save-md" disabled>Gem som .md-fil</button>
+        <button type="button" class="secondary" id="copy" disabled>Kopiér tekst</button>
+      </div>
+    </section>
+
+    <footer>
+      <p>Filen må ikke lægges direkte i vidensbasen. Giv den til assistenten, som tjekker for navne og private oplysninger først.</p>
+      <p>Prøv selv: når sprogmodellen er hentet, kan du slå internettet fra. Appen virker stadig, fordi intet sendes nogen steder hen.</p>
+    </footer>
+  </main>
+</body>
+</html>
