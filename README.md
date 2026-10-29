@@ -42,6 +42,9 @@ du hentet den, sletter appen den selv, næste gang du åbner den.
 - **iPhone:** *Diktering* skal være slået til (Indstillinger → Generelt → Tastatur).
   Virker live-tekst ikke i appen på hjemmeskærmen, så åbn siden i Safari.
 - **Firefox** har ikke talegenkendelse. Brug Edge, Chrome eller Safari.
+- **Teksten huskes.** Titel, dato og tekst gemmes løbende i browseren på enheden og er
+  der igen, hvis du lukker appen. Tryk *Ny optagelse* for at slette dem. Tælleren under
+  teksten viser antal ord (tidsstempler tælles ikke med).
 - **Versionsnummer** står nederst på siden.
 
 ## Udgiv på GitHub Pages

@@ -43,18 +43,22 @@
 
     <section class="card">
       <h2><span class="step">3</span> Tekst</h2>
+      <p id="restored" class="note" hidden></p>
       <label class="field">Tekst <span class="hint">(du kan rette i den)</span>
         <textarea id="text" rows="14" placeholder="Teksten kommer her, mens der tales."></textarea>
       </label>
+      <p id="count" class="status counter">0 ord</p>
       <div class="row">
         <button type="button" id="save-md" disabled>Gem som .md-fil</button>
         <button type="button" class="secondary" id="copy" disabled>Kopiér tekst</button>
+        <button type="button" class="secondary" id="reset" disabled>Ny optagelse</button>
       </div>
     </section>
 
     <footer>
       <p>Filen må ikke lægges direkte i vidensbasen. Giv den til assistenten, som tjekker for navne og private oplysninger først.</p>
       <p>Skærmen skal være tændt, og appen skal være åben, mens der tales.</p>
+      <p>Teksten bliver gemt løbende på denne enhed, så den er der igen, hvis du lukker appen. Tryk <em>Ny optagelse</em> for at slette den.</p>
       <p id="version" class="version"></p>
     </footer>
   </main>

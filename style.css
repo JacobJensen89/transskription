@@ -82,6 +82,7 @@ button:focus-visible, .button:focus-visible, input:focus-visible, textarea:focus
 .note { background: var(--note-bg); color: var(--note-text); padding: 8px 12px; border-radius: 8px; font-size: .95rem; }
 .warning { background: var(--warn-bg); color: var(--warn-text); }
 .version { opacity: .8; }
+.counter { margin: -4px 0 12px; font-variant-numeric: tabular-nums; }
 .status { color: var(--muted); font-size: .95rem; }
 .hint { color: var(--muted); font-weight: 400; }
 
