@@ -13,6 +13,7 @@
   <script type="module" src="app.js"></script>
 </head>
 <body>
+  <div id="boot" aria-hidden="true" hidden><pre id="boot-log"></pre></div>
   <canvas id="rain" aria-hidden="true"></canvas>
   <main>
     <header>
@@ -81,14 +82,19 @@
       </label>
       <label class="field">Udseende
         <select id="opt-theme">
-          <option value="matrix">Matrix (sort og grøn)</option>
+          <option value="terminal">Terminal (hackerfilm)</option>
+          <option value="matrix">Matrix (faldende kode)</option>
           <option value="auto">Som telefonen</option>
           <option value="light">Lyst</option>
           <option value="dark">Mørkt</option>
         </select>
       </label>
+      <label class="check"><input type="checkbox" id="opt-crt">
+        <span>Skærmlinjer og glød<small>Kun i Terminal-udseendet. Slå fra, hvis teksten er svær at læse.</small></span></label>
+      <label class="check"><input type="checkbox" id="opt-boot">
+        <span>Opstartsskærm<small>Kort tekst som i en film, når appen åbnes. Kun i Terminal-udseendet.</small></span></label>
       <label class="check"><input type="checkbox" id="opt-rain">
-        <span>Matrix-regn i baggrunden<small>Står stille, mens der lyttes, så den ikke forstyrrer eller bruger strøm.</small></span></label>
+        <span>Faldende kode i baggrunden<small>Kun i Matrix-udseendet. Står stille, mens der lyttes.</small></span></label>
       <label class="field">Egne ord <span class="hint">(ét ord pr. linje: <code>forkert = rigtigt</code>)</span>
         <textarea id="opt-words" rows="5" placeholder="øjen = Jørgen&#10;søren = Søren"></textarea>
       </label>
