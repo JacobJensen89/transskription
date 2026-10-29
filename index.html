@@ -16,7 +16,7 @@
   <main>
     <header>
       <h1>Transskription</h1>
-      <p class="lead">Omsæt tale fra møder til tekst. Lyd og tekst bliver på denne computer.</p>
+      <p class="lead">Omsæt tale fra møder til tekst og gem den som en .md-fil.</p>
     </header>
 
     <section class="card" id="model-card">
@@ -29,6 +29,17 @@
     <section class="card">
       <h2><span class="step">2</span> Lyd</h2>
       <p class="note">Husk at spørge deltagerne om lov, før du optager et møde.</p>
+
+      <h3>Live-tekst</h3>
+      <p class="status" id="live-intro">Teksten kommer, mens der tales. Kvaliteten er god, men lyden sendes til browserens tale-tjeneste. Brug den kun, når det er i orden.</p>
+      <div class="row">
+        <button type="button" id="live">🎙 Start live-tekst</button>
+      </div>
+      <p id="live-status" class="status" hidden></p>
+      <p id="live-interim" class="interim" hidden></p>
+
+      <h3>Kun på denne computer</h3>
+      <p class="status">Lyden forlader ikke computeren. Kræver sprogmodellen i trin 1.</p>
       <div class="row">
         <button type="button" id="record">● Optag</button>
         <label class="button secondary" for="file">Vælg lydfil</label>
@@ -72,7 +83,7 @@
 
     <footer>
       <p>Filen må ikke lægges direkte i vidensbasen. Giv den til assistenten, som tjekker for navne og private oplysninger først.</p>
-      <p>Prøv selv: når sprogmodellen er hentet, kan du slå internettet fra. Appen virker stadig, fordi intet sendes nogen steder hen.</p>
+      <p>Optag og Vælg lydfil sender intet nogen steder hen. Prøv selv: når sprogmodellen er hentet, kan du slå internettet fra, og det virker stadig. Live-tekst sender lyden til browserens tale-tjeneste.</p>
       <p id="version" class="version"></p>
     </footer>
   </main>

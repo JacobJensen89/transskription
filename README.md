@@ -1,10 +1,27 @@
 # Transskription
 
-En app, der omsætter dansk tale fra møder til tekst. Den kører i browseren, og lyd og
-tekst forlader aldrig computeren. Resultatet gemmes som en `.md`-fil, som du giver
-til assistenten i vidensbasen.
+En app, der omsætter dansk tale fra møder til tekst. Den kører i browseren, og
+resultatet gemmes som en `.md`-fil, som du giver til assistenten i vidensbasen.
+
+Der er to måder at få tekst på:
+
+| | Live-tekst | Kun på denne computer |
+|---|---|---|
+| Hvordan | Teksten kommer, mens der tales | Optag eller vælg en lydfil, og omsæt den bagefter |
+| Kvalitet på dansk | God (samme motor som SpeechTexter) | Middel (`whisper-small`) |
+| Lyden sendes til | Browserens tale-tjeneste: Microsoft i Edge, Google i Chrome, Apple på iPhone | Ingen. Den bliver på computeren |
+| Kræver | Internet | Sprogmodellen hentet én gang (250–450 MB) |
+
+Brug kun live-tekst, når det er i orden, at lyden forlader computeren. Appen spørger,
+før den bruges første gang, og skriver i `.md`-filen, hvilken måde teksten er lavet på.
 
 ## Sådan bruger du den
+
+**Live-tekst:** Tryk *Start live-tekst*, og tal. Tryk *Stop live-tekst*, når mødet er
+slut. Skriv titel, og gem som `.md`-fil. Appen starter selv genkendelsen igen, hvis
+browseren stopper den efter en pause.
+
+**Kun på denne computer:**
 
 1. **Sprogmodel.** Første gang trykker du på *Hent sprogmodel*. Den fylder 250–450 MB
    og ligger bagefter i browseren. Næste gang starter den af sig selv.
@@ -19,12 +36,13 @@ Giv filen til assistenten i vidensbasen. **Læg den aldrig selv ind i vidensbase
 repo**, for alt, der kommer i git, bliver der for altid. Assistenten tjekker for navne
 og private oplysninger først.
 
-## Hvorfor intet forlader computeren
+## Hvorfor intet forlader computeren (Optag og Vælg lydfil)
 
 - Sprogmodellen hentes én gang fra Hugging Face og gemmes i browseren.
 - Selve omsætningen sker i browseren, på grafikkortet (WebGPU) hvis det kan, ellers
   på processoren (WASM, langsommere).
-- Browserens egen talegenkendelse bruges ikke, fordi den sender lyd til Google.
+- Browserens egen talegenkendelse bruges kun ved live-tekst, fordi den sender lyden
+  til browserens leverandør.
 - Programkoden til modellen ligger i mappen `vendor/` i stedet for at blive hentet
   fra en fremmed server.
 
@@ -49,6 +67,10 @@ Det gøres én gang:
 
 - **Bedste browser:** Chrome eller Edge på en computer. De kan bruge grafikkortet, så
   det går meget hurtigere. Firefox og Safari virker, men langsommere.
+- **Skærmen skal være tændt:** En app i browseren kan ikke optage med slukket skærm
+  eller i baggrunden. Appen viser en rød advarsel, hvis det er sket. Skal skærmen være
+  slukket, så optag med telefonens egen optager og brug *Vælg lydfil*.
+- **Versionsnummer** står nederst på siden.
 - **Telefon:** virker, men en lang optagelse tager lang tid. Optag gerne på telefonen,
   gem lydfilen, og omsæt den på computeren.
 - **Lange møder:** en time lyd fylder ca. 250 MB hukommelse under omsætningen.
