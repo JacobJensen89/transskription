@@ -1,7 +1,7 @@
 {
   "name": "Transskription",
   "short_name": "Transskription",
-  "description": "Omsæt dansk tale fra møder til tekst. Alt foregår på din egen computer.",
+  "description": "Omsæt dansk tale fra møder til tekst, live, og gem den som en .md-fil.",
   "lang": "da",
   "start_url": "./",
   "scope": "./",
