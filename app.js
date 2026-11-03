@@ -3,7 +3,7 @@
 
 // Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se i
 // bunden af siden, om browseren har hentet den nyeste.
-const VERSION = 15;
+const VERSION = 16;
 
 // Browserens indbyggede talegenkendelse. Den er god til dansk, men lyden sendes
 // til browserens leverandør. Derfor spørger appen, før den bruges første gang.
@@ -15,6 +15,10 @@ const PAUSE_MS = 1500;
 const SNAPSHOT_MS = 10000;
 
 const $ = (id) => document.getElementById(id);
+
+// På en telefon slukker systemet mikrofonen, når appen skjules. På en computer fortsætter
+// den, også når fanen ligger bag en anden, fx et møde i et andet vindue.
+const MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
 let live = null;
 let liveAccepted = false;
@@ -477,7 +481,7 @@ function startRecognition(state) {
     logEvent(`Genkendelse sluttede efter ${clock(ranFor)}${saved ? ` (${saved} uafsluttede stykker gemt)` : ''}`);
     if (state.fatal) {
       stopLive(state.fatal);
-    } else if (document.hidden) {
+    } else if (document.hidden && MOBILE) {
       logEvent('Venter med genstart, til appen er synlig igen');
       state.waiting = true;
     } else {
@@ -625,6 +629,13 @@ function stopLive(message) {
 function onVisibility(hidden) {
   const state = live;
   if (!state) return;
+  if (!MOBILE) {
+    // Computer: genkendelsen kører videre. Det logges kun, så man kan se det bagefter.
+    if (state.hiddenLogged !== hidden) logEvent(hidden ? 'Fanen skjult (genkendelsen fortsætter)' : 'Fanen synlig igen');
+    state.hiddenLogged = hidden;
+    if (!hidden) keepAwake(true);
+    return;
+  }
   if (hidden) {
     if (state.gapStart === null) logEvent('Appen skjult (baggrund eller slukket skærm)');
     state.gapStart ??= state.elapsed();
