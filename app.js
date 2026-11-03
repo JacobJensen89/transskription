@@ -3,7 +3,7 @@
 
 // Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se i
 // bunden af siden, om browseren har hentet den nyeste.
-const VERSION = 17;
+const VERSION = 18;
 
 // Browserens indbyggede talegenkendelse. Den er god til dansk, men lyden sendes
 // til browserens leverandør. Derfor spørger appen, før den bruges første gang.
@@ -13,6 +13,9 @@ const PARAGRAPH_S = 60; // Nyt afsnit med tidsstempel cirka hvert minut.
 // genkendelsen lukker. Derfor gemmes uafsluttet tekst efter en pause og med jævne mellemrum.
 const PAUSE_MS = 1500;
 const SNAPSHOT_MS = 10000;
+// Sker der slet ingen hændelser fra genkendelsen i så lang tid (hverken lyd, tale eller resultater),
+// kan den være hængt uden at give besked. På computer startes den så forfra.
+const STALL_MS = 40000;
 
 const $ = (id) => document.getElementById(id);
 
@@ -247,7 +250,7 @@ function formatSegment(raw) {
 
 // Hændelser uden selve teksten, så man bagefter kan se, hvorfor en lang optagelse stoppede.
 const LOG_KEY = 'transskription-log';
-const LOG_MAX = 300;
+const LOG_MAX = 600;
 let runLog = [];
 try { runLog = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch { runLog = []; }
 let logTimer = null;
@@ -523,6 +526,7 @@ function toggleLive() {
     $('live-status').textContent = 'Lytter … ' + clock(state.elapsed())
       + (quiet > Math.min(60, settings.alarmSecs) ? ` · Ingen tale registreret i ${clock(quiet)}. Hører mikrofonen dig?` : '');
     if (state.pendingText && Date.now() - state.snapshotAt >= SNAPSHOT_MS) flushPending(state);
+    restartIfStalled(state);
     if (quiet >= settings.alarmSecs) startAlarm(state, `Ingen tale i ${clock(quiet)}. Hører mikrofonen dig?`);
     else if (state.failStreak >= FAIL_LIMIT) startAlarm(state, 'Genkendelsen kommer ikke i gang igen.');
   };
@@ -530,15 +534,23 @@ function toggleLive() {
   state.timer = setInterval(tick, 1000);
 }
 
-function startRecognition(state) {
+function startRecognition(state, silentLog = false) {
   const rec = new SpeechRecognition();
   rec.lang = 'da-DK';
   rec.continuous = true;
   rec.interimResults = true;
   rec.maxAlternatives = settings.longest ? 5 : 1;
   const startedAt = Date.now();
-  logEvent(state.restarts === 0 ? 'Genkendelse startet' : `Genkendelse startet igen (genstart nr. ${state.restarts})`);
+  if (!silentLog) logEvent(state.restarts === 0 ? 'Genkendelse startet' : `Genkendelse startet igen (genstart nr. ${state.restarts})`);
+  // Hændelser tælles pr. start, så loggen kan vise, om browseren hørte lyd og tale uden at levere tekst.
+  const sess = { sound: 0, speech: 0, results: 0, lastEvent: Date.now() };
+  state.sess = sess;
+  rec.onsoundstart = () => { sess.sound++; sess.lastEvent = Date.now(); };
+  rec.onspeechstart = () => { sess.speech++; sess.lastEvent = Date.now(); };
   rec.onresult = (e) => {
+    if (state.recognition !== rec) return;
+    sess.results++;
+    sess.lastEvent = Date.now();
     let interim = '';
     const quiet = (Date.now() - state.lastSpeech) / 1000;
     if (quiet > 15) logEvent(`Tale igen efter ${clock(quiet)} uden tale`);
@@ -565,6 +577,8 @@ function startRecognition(state) {
     $('live-interim').textContent = interim;
   };
   rec.onerror = (e) => {
+    if (state.recognition !== rec) return;
+    sess.lastEvent = Date.now();
     // «no-speech» og «aborted» hører til det normale, når browseren selv lukker.
     logEvent(`Fejl fra genkendelsen: ${e.error}${e.message ? ' (' + e.message + ')' : ''}`);
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
@@ -578,6 +592,7 @@ function startRecognition(state) {
   };
   // Browseren stopper selv efter en pause eller nogle minutter. Så startes den igen.
   rec.onend = () => {
+    if (state.recognition !== rec) return;
     $('live-interim').hidden = true;
     if (!state.active) return;
     const ranFor = (Date.now() - startedAt) / 1000;
@@ -586,7 +601,8 @@ function startRecognition(state) {
     flushPending(state);
     state.pendingText = '';
     state.pendingCommitted = '';
-    logEvent(`Genkendelse sluttede efter ${clock(ranFor)}${saved ? ` (${saved} uafsluttede stykker gemt)` : ''}`);
+    logEvent(`Genkendelse sluttede efter ${clock(ranFor)} (lyd ${sess.sound}, tale ${sess.speech}, resultater ${sess.results}`
+      + `${saved ? `, ${saved} uafsluttede stykker gemt` : ''})`);
     if (state.fatal) {
       stopLive(state.fatal);
     } else if (document.hidden && MOBILE) {
@@ -606,6 +622,24 @@ function startRecognition(state) {
   } catch (err) {
     stopLive('Live-tekst kunne ikke starte: ' + err.message);
   }
+}
+
+// Starter genkendelsen forfra, hvis den ikke har givet livstegn i lang tid. Hændelser fra den gamle
+// ignoreres, så der ikke kommer dobbelt op.
+function restartIfStalled(state) {
+  if (MOBILE || !state.sess || !state.recognition || state.waiting) return;
+  const idle = Date.now() - state.sess.lastEvent;
+  if (idle < STALL_MS) return;
+  state.stalls = (state.stalls || 0) + 1;
+  logEvent(`Ingen hændelser fra genkendelsen i ${clock(idle / 1000)} (lyd ${state.sess.sound}, tale ${state.sess.speech}, `
+    + `resultater ${state.sess.results}): starter den forfra (nr. ${state.stalls})`);
+  flushPending(state);
+  state.pendingText = '';
+  state.pendingCommitted = '';
+  const old = state.recognition;
+  state.restarts++;
+  startRecognition(state, true);
+  try { old.abort(); } catch { /* allerede lukket */ }
 }
 
 // Med «vælg den længste udgave» tages den længste af de foreslåede udgaver.

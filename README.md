@@ -50,6 +50,9 @@ og private oplysninger først.
   støjfjernelse er til, og et lydniveau, mens du taler. *Optag 5 sek. og afspil* lader dig høre,
   hvad mikrofonen opfanger. Brug den, hvis appen ikke kan høre dig under et møde. Lyden bliver
   på enheden. Talegenkendelsen kan ikke vælge mikrofon selv, den bruger browserens standard.
+- **Genstart ved hængt genkendelse (computer):** Kommer der ingen hændelser fra genkendelsen i 40
+  sekunder, hverken lyd, tale eller tekst, starter appen den forfra. Loggen viser, hvor mange
+  gange lyd, tale og resultater der kom i hver omgang.
 - **Kørselslog** (Indstillinger): tidspunkter for start, stop, genstarter, fejl, skærmlås,
   netværk og alarmer, uden selve teksten. Brug *Kopiér log*, hvis en lang optagelse stoppede
   uventet.
