@@ -79,6 +79,13 @@
         <span>Stort begyndelsesbogstav i hver sætning</span></label>
       <label class="check"><input type="checkbox" id="opt-period">
         <span>Sæt punktum efter hver sætning<small>Hvis den ikke selv har sat et tegn.</small></span></label>
+      <label class="field">Lyttemåde
+        <select id="opt-mode">
+          <option value="short">Kort ad gangen (nyt)</option>
+          <option value="long">Sammenhængende (som før)</option>
+        </select>
+      </label>
+      <p class="status">Kort ad gangen starter genkendelsen forfra efter hver sætning. Det kan give mere tekst i møder, hvor flere taler i munden på hinanden. Prøv begge, og sammenlign antal ord. Kørselsloggen viser forskellen.</p>
       <label class="check"><input type="checkbox" id="opt-longest">
         <span>Vælg den længste udgave<small>Tale-tjenesten foreslår flere udgaver af hver sætning. Slå den til, hvis der mangler tekst efter lange passager.</small></span></label>
       <label class="field">Skriftstørrelse i tekstfeltet: <b id="font-label"></b>

@@ -3,7 +3,7 @@
 
 // Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se i
 // bunden af siden, om browseren har hentet den nyeste.
-const VERSION = 18;
+const VERSION = 19;
 
 // Browserens indbyggede talegenkendelse. Den er god til dansk, men lyden sendes
 // til browserens leverandør. Derfor spørger appen, før den bruges første gang.
@@ -34,7 +34,7 @@ const SETTINGS_KEY = 'transskription-indstillinger';
 const DEFAULT_SETTINGS = {
   commands: true, capitals: true, period: true, longest: false,
   fontSize: 17, theme: 'terminal', crt: true, boot: true, rain: true, words: '',
-  alarm: true, alarmSecs: 60, alarmVibrate: true, alarmSound: true,
+  alarm: true, alarmSecs: 60, alarmVibrate: true, alarmSound: true, listenMode: 'short',
 };
 let settings = { ...DEFAULT_SETTINGS };
 try {
@@ -62,6 +62,7 @@ function applySettings() {
   $('opt-boot').checked = settings.boot;
   $('opt-alarm').checked = settings.alarm;
   $('opt-alarm-secs').value = String(settings.alarmSecs);
+  $('opt-mode').value = settings.listenMode;
   $('opt-alarm-vibrate').checked = settings.alarmVibrate;
   $('opt-alarm-sound').checked = settings.alarmSound;
   $('opt-words').value = settings.words;
@@ -159,6 +160,7 @@ function bindSettings() {
   $('opt-crt').onchange = () => { settings.crt = $('opt-crt').checked; saveSettings(); applySettings(); };
   $('opt-boot').onchange = () => { settings.boot = $('opt-boot').checked; saveSettings(); };
   $('opt-alarm').onchange = () => { settings.alarm = $('opt-alarm').checked; saveSettings(); };
+  $('opt-mode').onchange = () => { settings.listenMode = $('opt-mode').value; saveSettings(); };
   $('opt-alarm-vibrate').onchange = () => { settings.alarmVibrate = $('opt-alarm-vibrate').checked; saveSettings(); };
   $('opt-alarm-sound').onchange = () => { settings.alarmSound = $('opt-alarm-sound').checked; saveSettings(); };
   $('opt-alarm-secs').onchange = () => { settings.alarmSecs = Number($('opt-alarm-secs').value); saveSettings(); };
@@ -507,6 +509,7 @@ function toggleLive() {
     active: true, started: Date.now(), lastSpeech: Date.now(), paragraphStart: null, gapStart: null, timer: null,
     failStreak: 0, restarts: 0, alarmOn: false, alarmTimer: null,
     pendingText: '', pendingCommitted: '', flushTimer: null, snapshotAt: Date.now(), interimCommits: 0,
+    stats: { since: Date.now(), sessions: 0, results: 0, sound: 0, speech: 0, errors: {} },
   };
   state.elapsed = () => (Date.now() - state.started) / 1000;
   live = state;
@@ -527,6 +530,7 @@ function toggleLive() {
       + (quiet > Math.min(60, settings.alarmSecs) ? ` · Ingen tale registreret i ${clock(quiet)}. Hører mikrofonen dig?` : '');
     if (state.pendingText && Date.now() - state.snapshotAt >= SNAPSHOT_MS) flushPending(state);
     restartIfStalled(state);
+    if (state.mode === 'short' && Date.now() - state.stats.since >= 60000) logMinute(state);
     if (quiet >= settings.alarmSecs) startAlarm(state, `Ingen tale i ${clock(quiet)}. Hører mikrofonen dig?`);
     else if (state.failStreak >= FAIL_LIMIT) startAlarm(state, 'Genkendelsen kommer ikke i gang igen.');
   };
@@ -537,11 +541,15 @@ function toggleLive() {
 function startRecognition(state, silentLog = false) {
   const rec = new SpeechRecognition();
   rec.lang = 'da-DK';
-  rec.continuous = true;
+  // «Kort ad gangen»: genkendelsen lukker efter hver sætning og startes forfra med det samme.
+  state.mode = settings.listenMode;
+  rec.continuous = state.mode === 'long';
   rec.interimResults = true;
   rec.maxAlternatives = settings.longest ? 5 : 1;
   const startedAt = Date.now();
-  if (!silentLog) logEvent(state.restarts === 0 ? 'Genkendelse startet' : `Genkendelse startet igen (genstart nr. ${state.restarts})`);
+  if (!silentLog && (state.mode === 'long' || state.restarts === 0 || state.failStreak > 0)) {
+    logEvent(state.restarts === 0 ? `Genkendelse startet (${state.mode === 'short' ? 'kort ad gangen' : 'sammenhængende'})` : `Genkendelse startet igen (genstart nr. ${state.restarts})`);
+  }
   // Hændelser tælles pr. start, så loggen kan vise, om browseren hørte lyd og tale uden at levere tekst.
   const sess = { sound: 0, speech: 0, results: 0, lastEvent: Date.now() };
   state.sess = sess;
@@ -579,8 +587,11 @@ function startRecognition(state, silentLog = false) {
   rec.onerror = (e) => {
     if (state.recognition !== rec) return;
     sess.lastEvent = Date.now();
-    // «no-speech» og «aborted» hører til det normale, når browseren selv lukker.
-    logEvent(`Fejl fra genkendelsen: ${e.error}${e.message ? ' (' + e.message + ')' : ''}`);
+    state.stats.errors[e.error] = (state.stats.errors[e.error] || 0) + 1;
+    // «no-speech» og «aborted» hører til det normale, når browseren selv lukker. I «kort ad gangen»
+    // sker det hele tiden og tælles kun, ellers ville loggen blive fyldt.
+    const routine = e.error === 'no-speech' || e.error === 'aborted';
+    if (!(routine && state.mode === 'short')) logEvent(`Fejl fra genkendelsen: ${e.error}${e.message ? ' (' + e.message + ')' : ''}`);
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
       state.fatal = 'Browseren har ikke lov til at bruge mikrofonen eller tale-tjenesten. '
         + 'På iPhone: slå Diktering til, eller åbn siden i Safari i stedet for appen.';
@@ -601,19 +612,26 @@ function startRecognition(state, silentLog = false) {
     flushPending(state);
     state.pendingText = '';
     state.pendingCommitted = '';
-    logEvent(`Genkendelse sluttede efter ${clock(ranFor)} (lyd ${sess.sound}, tale ${sess.speech}, resultater ${sess.results}`
-      + `${saved ? `, ${saved} uafsluttede stykker gemt` : ''})`);
+    const st = state.stats;
+    st.sessions++; st.results += sess.results; st.sound += sess.sound; st.speech += sess.speech;
+    // En omgang, der lukker med det samme uden at høre noget, er en fejl. Er der lyd eller tekst,
+    // er det normalt, især i «kort ad gangen».
+    const heard = sess.results + sess.sound + sess.speech > 0;
+    const quick = ranFor < 2 && !heard;
+    if (state.mode === 'long' || quick) {
+      logEvent(`Genkendelse sluttede efter ${clock(ranFor)} (lyd ${sess.sound}, tale ${sess.speech}, resultater ${sess.results}`
+        + `${saved ? `, ${saved} uafsluttede stykker gemt` : ''})`);
+    }
     if (state.fatal) {
       stopLive(state.fatal);
     } else if (document.hidden && MOBILE) {
       logEvent('Venter med genstart, til appen er synlig igen');
       state.waiting = true;
     } else {
-      // Hvis den stoppede med det samme, ventes lidt, så den ikke prøver i ring.
-      const quick = ranFor < 2;
+      // Hvis den stoppede med det samme uden at høre noget, ventes lidt, så den ikke prøver i ring.
       state.failStreak = quick ? state.failStreak + 1 : 0;
       state.restarts++;
-      setTimeout(() => state.active && startRecognition(state), quick ? 2000 : 100);
+      setTimeout(() => state.active && startRecognition(state), quick ? 2000 : 50);
     }
   };
   state.recognition = rec;
@@ -622,6 +640,15 @@ function startRecognition(state, silentLog = false) {
   } catch (err) {
     stopLive('Live-tekst kunne ikke starte: ' + err.message);
   }
+}
+
+// I «kort ad gangen» er der mange små omgange. Loggen får kun et resumé hvert minut.
+function logMinute(state) {
+  const st = state.stats;
+  const errors = Object.entries(st.errors).map(([k, v]) => `${k} ${v}`).join(', ') || 'ingen';
+  logEvent(`Seneste minut: ${st.sessions} omgange, lyd ${st.sound}, tale ${st.speech}, resultater ${st.results}, `
+    + `fejl: ${errors}. Ord i alt: ${countWords($('text').value)}`);
+  state.stats = { since: Date.now(), sessions: 0, results: 0, sound: 0, speech: 0, errors: {} };
 }
 
 // Starter genkendelsen forfra, hvis den ikke har givet livstegn i lang tid. Hændelser fra den gamle
@@ -695,7 +722,9 @@ function addLiveText(state, transcript) {
   // den forrige, erstattes den forrige. Er den en ældre, kortere udgave, droppes den.
   // Det sker kun, hvis ingen har rettet i teksten imens.
   const norm = t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-  const last = state.last;
+  // Rettelser og forlængelser hører til samme omgang. En ny omgang er ny tale, også hvis den
+  // minder om den forrige («Ja det er fint» og «Ja det er rigtigt»).
+  const last = state.last?.sess === state.sess ? state.last : null;
   if (last && norm && box.value.length === last.end) {
     if (last.norm.startsWith(norm)) return;
     // Er den nye en rettet udgave af den forrige, erstatter den. Er den kortere, beholdes den
@@ -704,7 +733,7 @@ function addLiveText(state, transcript) {
     if (similar && norm.length < last.norm.length) return;
     if (norm.startsWith(last.norm) || similar) {
       box.value = box.value.slice(0, last.start) + t;
-      state.last = { norm, start: last.start, end: box.value.length };
+      state.last = { norm, start: last.start, end: box.value.length, sess: state.sess };
       box.scrollTop = box.scrollHeight;
       updateButtons();
       return;
@@ -724,7 +753,7 @@ function addLiveText(state, transcript) {
   }
   const start = box.value.length;
   box.value += t;
-  state.last = { norm, start, end: box.value.length };
+  state.last = { norm, start, end: box.value.length, sess: state.sess };
   box.scrollTop = box.scrollHeight;
   updateButtons();
 }
