@@ -46,6 +46,10 @@ og private oplysninger først.
   1,5 sekunds pause, hvert 10. sekund under sammenhængende tale, når genkendelsen lukker, og
   når du trykker stop. Kommer et færdigt resultat bagefter, erstatter det den gemte tekst. Er
   det færdige kortere end det, der er gemt, beholdes den længste udgave.
+- **Mikrofontest** (Indstillinger): viser, hvilken mikrofon browseren bruger, om ekko- og
+  støjfjernelse er til, og et lydniveau, mens du taler. *Optag 5 sek. og afspil* lader dig høre,
+  hvad mikrofonen opfanger. Brug den, hvis appen ikke kan høre dig under et møde. Lyden bliver
+  på enheden. Talegenkendelsen kan ikke vælge mikrofon selv, den bruger browserens standard.
 - **Kørselslog** (Indstillinger): tidspunkter for start, stop, genstarter, fejl, skærmlås,
   netværk og alarmer, uden selve teksten. Brug *Kopiér log*, hvis en lang optagelse stoppede
   uventet.

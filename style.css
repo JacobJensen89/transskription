@@ -284,3 +284,7 @@ code { background: var(--accent-soft); padding: 1px 6px; border-radius: 4px; }
   .alarm:not([hidden]) { animation: alarm-pulse 1.2s ease-in-out infinite; }
 }
 @keyframes alarm-pulse { 50% { box-shadow: 0 0 0 3px var(--danger); } }
+
+.meter { height: 20px; margin: 8px 0; border: 1px solid var(--border); background: var(--bg); }
+#mic-bar { height: 100%; width: 0; background: var(--accent); transition: width .08s linear; }
+#mic-audio { width: 100%; margin-top: 8px; }

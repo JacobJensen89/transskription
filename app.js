@@ -3,7 +3,7 @@
 
 // Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se i
 // bunden af siden, om browseren har hentet den nyeste.
-const VERSION = 16;
+const VERSION = 17;
 
 // Browserens indbyggede talegenkendelse. Den er god til dansk, men lyden sendes
 // til browserens leverandør. Derfor spørger appen, før den bruges første gang.
@@ -168,6 +168,9 @@ function bindSettings() {
   };
   $('alarm-stop').onclick = silenceAlarm;
   $('log-copy').onclick = copyLog;
+  $('mic-start').onclick = () => (mic.stream ? micStop() : micStart());
+  $('mic-rec').onclick = micRecord;
+  $('mic-box').addEventListener('toggle', () => { if (!$('mic-box').open) micStop(); });
   $('log-clear').onclick = () => { runLog = []; persistLog(); renderLog(); };
   $('opt-words').oninput = () => { settings.words = $('opt-words').value; wordRules = null; saveSettings(); };
   $('fix-words').onclick = fixWordsInText;
@@ -285,6 +288,110 @@ async function copyLog() {
   setTimeout(() => ($('log-copy').textContent = 'Kopiér log'), 2000);
 }
 
+// ---------- Mikrofontest ----------
+
+// Viser, hvad browseren hører, så man kan se, om ens egen stemme når frem, når der også kommer
+// lyd ud af højttalerne. Lyden bliver på enheden.
+const mic = { stream: null, ctx: null, raf: 0, peak: -Infinity, stopTimer: null, recorder: null };
+
+async function fillMicDevices() {
+  try {
+    const keep = $('mic-device').value;
+    const inputs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput');
+    $('mic-device').replaceChildren(new Option('Standard (den browseren bruger)', ''),
+      ...inputs.map((d, i) => new Option(d.label || `Mikrofon ${i + 1}`, d.deviceId)));
+    $('mic-device').value = inputs.some((d) => d.deviceId === keep) ? keep : '';
+  } catch { /* uden liste */ }
+}
+
+async function micStart() {
+  if (live) {
+    $('mic-info').hidden = false;
+    $('mic-info').textContent = 'Stop live-tekst først. Mikrofonen kan kun bruges af én ad gangen.';
+    return;
+  }
+  micStop();
+  const raw = $('mic-raw').checked;
+  const deviceId = $('mic-device').value;
+  try {
+    mic.stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+        echoCancellation: !raw, noiseSuppression: !raw, autoGainControl: !raw,
+      },
+    });
+  } catch (err) {
+    $('mic-info').hidden = false;
+    $('mic-info').textContent = 'Mikrofonen kunne ikke åbnes: ' + (err.name || 'fejl');
+    return;
+  }
+  await fillMicDevices();
+  const track = mic.stream.getAudioTracks()[0];
+  const s = track.getSettings();
+  const on = (v) => (v ? 'til' : 'fra');
+  mic.label = track.label || 'ukendt';
+  $('mic-info').hidden = false;
+  $('mic-info').textContent = `Bruger: ${mic.label} · ekkofjernelse ${on(s.echoCancellation)}, `
+    + `støjfjernelse ${on(s.noiseSuppression)}, automatisk lydstyrke ${on(s.autoGainControl)}`;
+  mic.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const analyser = mic.ctx.createAnalyser();
+  analyser.fftSize = 2048;
+  mic.ctx.createMediaStreamSource(mic.stream).connect(analyser);
+  const buf = new Float32Array(analyser.fftSize);
+  mic.peak = -Infinity;
+  const draw = () => {
+    analyser.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+    const db = 20 * Math.log10(Math.max(Math.sqrt(sum / buf.length), 1e-5));
+    mic.peak = Math.max(mic.peak, db);
+    $('mic-bar').style.width = Math.max(0, Math.min(100, ((db + 60) / 60) * 100)) + '%';
+    $('mic-peak').textContent = `Højeste niveau: ${Math.round(mic.peak)} dB. Under −50 dB hører browseren næsten intet. En stemme tæt på ligger typisk mellem −30 og −10 dB.`;
+    mic.raf = requestAnimationFrame(draw);
+  };
+  $('mic-meter').hidden = false;
+  $('mic-peak').hidden = false;
+  $('mic-start').textContent = 'Stop mikrofontest';
+  $('mic-rec').disabled = false;
+  draw();
+  mic.stopTimer = setTimeout(micStop, 120000);
+}
+
+function micRecord() {
+  if (!mic.stream || mic.recorder) return;
+  const parts = [];
+  const rec = new MediaRecorder(mic.stream);
+  mic.recorder = rec;
+  rec.ondataavailable = (e) => e.data.size && parts.push(e.data);
+  rec.onstop = () => {
+    mic.recorder = null;
+    $('mic-rec').textContent = 'Optag 5 sek. og afspil';
+    const audioEl = $('mic-audio');
+    if (audioEl.src) URL.revokeObjectURL(audioEl.src);
+    audioEl.src = URL.createObjectURL(new Blob(parts, { type: rec.mimeType }));
+    audioEl.hidden = false;
+    audioEl.play().catch(() => { /* afspilles ved tryk */ });
+  };
+  rec.start();
+  $('mic-rec').textContent = 'Optager …';
+  setTimeout(() => rec.state === 'recording' && rec.stop(), 5000);
+}
+
+function micStop() {
+  if (!mic.stream) return;
+  clearTimeout(mic.stopTimer);
+  cancelAnimationFrame(mic.raf);
+  if (mic.recorder?.state === 'recording') mic.recorder.stop();
+  mic.stream.getTracks().forEach((t) => t.stop());
+  mic.ctx?.close();
+  logEvent(`Mikrofontest: ${mic.label}, højeste niveau ${Number.isFinite(mic.peak) ? Math.round(mic.peak) : '?'} dB`);
+  mic.stream = null;
+  mic.ctx = null;
+  $('mic-start').textContent = 'Start mikrofontest';
+  $('mic-rec').disabled = true;
+  $('mic-bar').style.width = '0';
+}
+
 // ---------- Alarm ----------
 
 // Bip og vibration, hvis der ikke kommer tale, eller genkendelsen ikke kan komme i gang.
@@ -400,6 +507,7 @@ function toggleLive() {
   };
   state.elapsed = () => (Date.now() - state.started) / 1000;
   live = state;
+  micStop();
   unlockAudio();
   $('live-alarm').hidden = true;
   logEvent(`Start (${liveService()}, ${document.hidden ? 'skjult' : 'synlig'}, alarm ${settings.alarm ? settings.alarmSecs + ' s' : 'fra'})`);
