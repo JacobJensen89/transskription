@@ -3,12 +3,16 @@
 
 // Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se i
 // bunden af siden, om browseren har hentet den nyeste.
-const VERSION = 14;
+const VERSION = 15;
 
 // Browserens indbyggede talegenkendelse. Den er god til dansk, men lyden sendes
 // til browserens leverandør. Derfor spørger appen, før den bruges første gang.
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const PARAGRAPH_S = 60; // Nyt afsnit med tidsstempel cirka hvert minut.
+// Tale-tjenesten melder ofte først en sætning «færdig» efter lang tid, eller slet ikke, før
+// genkendelsen lukker. Derfor gemmes uafsluttet tekst efter en pause og med jævne mellemrum.
+const PAUSE_MS = 1500;
+const SNAPSHOT_MS = 10000;
 
 const $ = (id) => document.getElementById(id);
 
@@ -388,6 +392,7 @@ function toggleLive() {
   const state = {
     active: true, started: Date.now(), lastSpeech: Date.now(), paragraphStart: null, gapStart: null, timer: null,
     failStreak: 0, restarts: 0, alarmOn: false, alarmTimer: null,
+    pendingText: '', pendingCommitted: '', flushTimer: null, snapshotAt: Date.now(), interimCommits: 0,
   };
   state.elapsed = () => (Date.now() - state.started) / 1000;
   live = state;
@@ -405,6 +410,7 @@ function toggleLive() {
     const quiet = (Date.now() - state.lastSpeech) / 1000;
     $('live-status').textContent = 'Lytter … ' + clock(state.elapsed())
       + (quiet > Math.min(60, settings.alarmSecs) ? ` · Ingen tale registreret i ${clock(quiet)}. Hører mikrofonen dig?` : '');
+    if (state.pendingText && Date.now() - state.snapshotAt >= SNAPSHOT_MS) flushPending(state);
     if (quiet >= settings.alarmSecs) startAlarm(state, `Ingen tale i ${clock(quiet)}. Hører mikrofonen dig?`);
     else if (state.failStreak >= FAIL_LIMIT) startAlarm(state, 'Genkendelsen kommer ikke i gang igen.');
   };
@@ -427,12 +433,22 @@ function startRecognition(state) {
     state.lastSpeech = Date.now();
     state.failStreak = 0;
     stopAlarm(state, 'tale registreret');
+    let sawFinal = false;
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const r = e.results[i];
       const text = bestAlternative(r);
-      if (r.isFinal) addLiveText(state, text);
-      else interim += text;
+      if (r.isFinal) {
+        addLiveText(state, text);
+        sawFinal = true;
+      } else {
+        interim += text;
+      }
     }
+    // Det uafsluttede gemmes efter en pause. Et færdigt resultat afløser det, der er gemt.
+    if (sawFinal) state.pendingCommitted = '';
+    state.pendingText = interim.trim();
+    clearTimeout(state.flushTimer);
+    if (state.pendingText) state.flushTimer = setTimeout(() => flushPending(state), PAUSE_MS);
     $('live-interim').hidden = !interim;
     $('live-interim').textContent = interim;
   };
@@ -453,7 +469,12 @@ function startRecognition(state) {
     $('live-interim').hidden = true;
     if (!state.active) return;
     const ranFor = (Date.now() - startedAt) / 1000;
-    logEvent(`Genkendelse sluttede efter ${clock(ranFor)}`);
+    const saved = state.interimCommits;
+    state.interimCommits = 0;
+    flushPending(state);
+    state.pendingText = '';
+    state.pendingCommitted = '';
+    logEvent(`Genkendelse sluttede efter ${clock(ranFor)}${saved ? ` (${saved} uafsluttede stykker gemt)` : ''}`);
     if (state.fatal) {
       stopLive(state.fatal);
     } else if (document.hidden) {
@@ -506,6 +527,18 @@ function mostlySame(a, b) {
   return prev[y.length] / Math.min(x.length, y.length) >= 0.75;
 }
 
+// Gemmer det uafsluttede, så det ikke går tabt. Vokser sætningen, erstatter den nye udgave
+// den gemte, så der ikke kommer dobbelttekst.
+function flushPending(state) {
+  clearTimeout(state.flushTimer);
+  const text = state.pendingText;
+  if (!text || text === state.pendingCommitted) return;
+  state.pendingCommitted = text;
+  state.snapshotAt = Date.now();
+  state.interimCommits++;
+  addLiveText(state, text);
+}
+
 function addLiveText(state, transcript) {
   const t = formatSegment(transcript);
   if (!t) return;
@@ -519,7 +552,11 @@ function addLiveText(state, transcript) {
   const last = state.last;
   if (last && norm && box.value.length === last.end) {
     if (last.norm.startsWith(norm)) return;
-    if (norm.startsWith(last.norm) || mostlySame(last.norm, norm)) {
+    // Er den nye en rettet udgave af den forrige, erstatter den. Er den kortere, beholdes den
+    // længste: tale-tjenesten vælger nogle gange en kortere og mere sikker udgave.
+    const similar = mostlySame(last.norm, norm);
+    if (similar && norm.length < last.norm.length) return;
+    if (norm.startsWith(last.norm) || similar) {
       box.value = box.value.slice(0, last.start) + t;
       state.last = { norm, start: last.start, end: box.value.length };
       box.scrollTop = box.scrollHeight;
@@ -563,6 +600,7 @@ function addMarker(label) {
 function stopLive(message) {
   const state = live;
   if (!state) return;
+  flushPending(state);
   state.active = false;
   onVisibility(false);
   logEvent(message ? `Stoppet: ${message}` : `Stoppet af brugeren efter ${clock(state.elapsed())}`);

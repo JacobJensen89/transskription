@@ -41,6 +41,11 @@ og private oplysninger først.
   Indstillinger viser, om lyd og vibration virker, og hvad browseren svarede. Vibration og lyd
   kan slås til og fra hver for sig. Den virker kun, mens appen er åben og
   skærmen tændt, for i baggrunden sætter telefonen siden på pause.
+- **Ingen tekst går tabt:** Tale-tjenesten melder ofte ikke en sætning «færdig», før der har
+  været en lang pause, eller genkendelsen lukker. Appen gemmer derfor uafsluttet tekst efter
+  1,5 sekunds pause, hvert 10. sekund under sammenhængende tale, når genkendelsen lukker, og
+  når du trykker stop. Kommer et færdigt resultat bagefter, erstatter det den gemte tekst. Er
+  det færdige kortere end det, der er gemt, beholdes den længste udgave.
 - **Kørselslog** (Indstillinger): tidspunkter for start, stop, genstarter, fejl, skærmlås,
   netværk og alarmer, uden selve teksten. Brug *Kopiér log*, hvis en lang optagelse stoppede
   uventet.
