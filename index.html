@@ -125,6 +125,23 @@
         <button type="button" class="secondary" id="fix-words">Ret egne ord i hele teksten</button>
       </div>
       <p id="fix-result" class="status" hidden></p>
+      <details class="commands" id="mic-box">
+        <summary>Mikrofontest</summary>
+        <p class="status">Viser, hvilken mikrofon browseren bruger, og om den kan høre dig. Tal, mens kollegaerne også taler. Lyden bliver på enheden.</p>
+        <label class="field">Mikrofon
+          <select id="mic-device"><option value="">Standard (den browseren bruger)</option></select>
+        </label>
+        <label class="check"><input type="checkbox" id="mic-raw">
+          <span>Slå ekko- og støjfjernelse fra under testen<small>Kan din stemme kun høres uden, er det browserens lydbehandling, der fjerner den.</small></span></label>
+        <div class="row">
+          <button type="button" class="secondary" id="mic-start">Start mikrofontest</button>
+          <button type="button" class="secondary" id="mic-rec" disabled>Optag 5 sek. og afspil</button>
+        </div>
+        <p id="mic-info" class="status" hidden></p>
+        <div class="meter" id="mic-meter" hidden><div id="mic-bar"></div></div>
+        <p id="mic-peak" class="status" hidden></p>
+        <audio id="mic-audio" controls hidden></audio>
+      </details>
       <details class="commands" id="log-box">
         <summary>Kørselslog</summary>
         <p class="status">Tidspunkter for start, stop, genstart og fejl. Selve teksten står ikke i loggen. Den hjælper, hvis en lang optagelse stoppede, og du vil se hvorfor.</p>
