@@ -72,6 +72,8 @@ du hentet den, sletter appen den selv, næste gang du åbner den.
 
 ## Godt at vide
 
+- **Computer:** Appen lytter videre, også når fanen ligger bag en anden, fx et møde i et andet
+  vindue. Browseren kan dog sætte en skjult fane på lavt blus, så lad helst fanen være synlig.
 - **Skærmen skal være tændt** og appen åben, mens der tales. En app i browseren kan
   ikke lytte i baggrunden. Appen viser en rød advarsel, hvis den har været i
   baggrunden, og starter selv igen, når du kommer tilbage.
