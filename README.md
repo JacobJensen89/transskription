@@ -50,6 +50,12 @@ og private oplysninger først.
   støjfjernelse er til, og et lydniveau, mens du taler. *Optag 5 sek. og afspil* lader dig høre,
   hvad mikrofonen opfanger. Brug den, hvis appen ikke kan høre dig under et møde. Lyden bliver
   på enheden. Talegenkendelsen kan ikke vælge mikrofon selv, den bruger browserens standard.
+- **Lyttemåde** (Indstillinger): *Kort ad gangen* (standard) lader genkendelsen lukke efter hver
+  sætning og starter den forfra med det samme, ligesom mange diktatværktøjer gør. *Sammenhængende*
+  lader den køre i ét stræk. I møder, hvor flere taler i munden på hinanden, kan den
+  sammenhængende måde gå lange stræk uden at levere tekst. Kørselsloggen skriver hvert minut,
+  hvor mange omgange, lyd, tale og resultater der kom, og hvor mange ord der er i alt, så de to
+  måder kan sammenlignes.
 - **Genstart ved hængt genkendelse (computer):** Kommer der ingen hændelser fra genkendelsen i 40
   sekunder, hverken lyd, tale eller tekst, starter appen den forfra. Loggen viser, hvor mange
   gange lyd, tale og resultater der kom i hver omgang.
