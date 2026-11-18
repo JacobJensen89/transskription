@@ -1,7 +1,7 @@
 // Dansk tale til tekst med browserens talegenkendelse. Noter gemmes i browseren på enheden.
 
 // Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se, om den nyeste er hentet.
-const VERSION = 23;
+const VERSION = 24;
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -196,7 +196,8 @@ function textChanged() {
 const WORD_EDGE = (word) => `(?<![\\p{L}\\p{N}])${word}(?![\\p{L}\\p{N}])`;
 const COMMANDS = [
   ['spørgsmålstegn', '?'], ['udråbstegn', '!'], ['semikolon', ';'], ['kolon', ':'],
-  ['punktum', '.'], ['komma', ','], ['nyt\\s+afsnit', '\n\n'], ['(?:ny\\s+linje|linjeskift)', '\n'],
+  // Google skriver nogle gange kommandoerne i ét ord («nylinje», «nytafsnit») eller med gammel stavning («linie»).
+  ['punktum', '.'], ['komma', ','], ['nyt\\s*afsnit', '\n\n'], ['(?:nye?\\s*lin[ij]e|lin[ij]e\\s*skift)', '\n'],
 ].map(([word, symbol]) => [new RegExp(WORD_EDGE(word), 'giu'), symbol]);
 
 // Stemmekommandoer: ordet erstattes af tegnet, og mellemrum før tegnsætning fjernes.
