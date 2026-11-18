@@ -2,9 +2,9 @@
 <html lang="da">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Transskription</title>
-  <meta name="description" content="Omsæt dansk tale fra møder til tekst, live, og gem den som en .md-fil.">
+  <meta name="description" content="Dansk tale til tekst, live. Noter gemmes på enheden.">
   <meta name="theme-color" content="#000000">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
@@ -13,172 +13,35 @@
   <script type="module" src="app.js"></script>
 </head>
 <body>
-  <div id="boot" aria-hidden="true" hidden><pre id="boot-log"></pre></div>
-  <canvas id="rain" aria-hidden="true"></canvas>
+  <header id="bar">
+    <button type="button" id="open-list" aria-label="Noter">☰</button>
+    <h1 id="title">Ny note</h1>
+    <button type="button" id="new" aria-label="Ny note">+</button>
+  </header>
+
   <main>
-    <header>
-      <h1>Transskription</h1>
-      <p class="lead">Omsæt tale fra møder til tekst og gem den som en .md-fil.</p>
-    </header>
-
-    <section class="card">
-      <h2><span class="step">1</span> Live-tekst</h2>
-      <p class="note">Husk at spørge deltagerne om lov, før du optager et møde.</p>
-      <p class="status" id="live-intro">Teksten kommer, mens der tales. Lyden sendes til browserens tale-tjeneste. Brug den kun, når det er i orden.</p>
-      <div class="row">
-        <button type="button" id="live">🎙 Start live-tekst</button>
-      </div>
-      <p id="live-status" class="status" hidden></p>
-      <p id="live-interim" class="interim" hidden></p>
-      <p id="live-warning" class="note warning" role="alert" hidden></p>
-      <div id="live-alarm" class="note warning alarm" role="alert" hidden>
-        <span id="alarm-text"></span>
-        <button type="button" class="small" id="alarm-stop">Stop alarm</button>
-      </div>
-      <div class="row markers">
-        <span class="hint">Markér i teksten:</span>
-        <button type="button" class="secondary small" data-marker="Beslutning">Beslutning</button>
-        <button type="button" class="secondary small" data-marker="Handling">Handling</button>
-        <button type="button" class="secondary small" data-marker="Vigtigt">Vigtigt</button>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2><span class="step">2</span> Oplysninger</h2>
-      <label class="field">Titel
-        <input type="text" id="title" placeholder="Fx Projektmøde om ny cykelsti" autocomplete="off">
-      </label>
-      <label class="field">Projekt <span class="hint">(valgfri, så assistenten kan sortere den)</span>
-        <input type="text" id="project" placeholder="Fx Cykelstien" autocomplete="off">
-      </label>
-      <label class="field">Dato
-        <input type="date" id="date">
-      </label>
-    </section>
-
-    <section class="card">
-      <h2><span class="step">3</span> Tekst</h2>
-      <p id="restored" class="note" hidden></p>
-      <label class="field">Tekst <span class="hint">(du kan rette i den)</span>
-        <textarea id="text" rows="14" placeholder="Teksten kommer her, mens der tales."></textarea>
-      </label>
-      <p id="count" class="status counter">0 ord</p>
-      <div class="row">
-        <button type="button" id="save-md" disabled>Gem som .md-fil</button>
-        <button type="button" class="secondary" id="share" hidden>Del fil</button>
-        <button type="button" class="secondary" id="copy" disabled>Kopiér tekst</button>
-        <button type="button" class="secondary" id="reset" disabled>Ny optagelse</button>
-      </div>
-    </section>
-
-    <details class="card settings" id="settings">
-      <summary>Indstillinger</summary>
-      <label class="check"><input type="checkbox" id="opt-commands">
-        <span>Stemmekommandoer<small>Sig fx «punktum» eller «ny linje», så skrives tegnet i stedet for ordet.</small></span></label>
-      <label class="check"><input type="checkbox" id="opt-capitals">
-        <span>Stort begyndelsesbogstav i hver sætning</span></label>
-      <label class="check"><input type="checkbox" id="opt-period">
-        <span>Sæt punktum efter hver sætning<small>Hvis den ikke selv har sat et tegn.</small></span></label>
-      <label class="field">Lyttemåde
-        <select id="opt-mode">
-          <option value="short">Kort ad gangen (nyt)</option>
-          <option value="long">Sammenhængende (som før)</option>
-        </select>
-      </label>
-      <p class="status">Kort ad gangen starter genkendelsen forfra efter hver sætning. Det kan give mere tekst i møder, hvor flere taler i munden på hinanden. Prøv begge, og sammenlign antal ord. Kørselsloggen viser forskellen.</p>
-      <label class="check"><input type="checkbox" id="opt-longest">
-        <span>Vælg den længste udgave<small>Tale-tjenesten foreslår flere udgaver af hver sætning. Slå den til, hvis der mangler tekst efter lange passager.</small></span></label>
-      <label class="field">Skriftstørrelse i tekstfeltet: <b id="font-label"></b>
-        <input type="range" id="opt-font" min="14" max="28" step="1">
-      </label>
-      <label class="field">Udseende
-        <select id="opt-theme">
-          <option value="terminal">Terminal (hackerfilm)</option>
-          <option value="matrix">Matrix (faldende kode)</option>
-          <option value="auto">Som telefonen</option>
-          <option value="light">Lyst</option>
-          <option value="dark">Mørkt</option>
-        </select>
-      </label>
-      <label class="check"><input type="checkbox" id="opt-alarm">
-        <span>Alarm ved stilhed eller fejl<small>Vibration og bip, hvis der ikke kommer tale, eller genkendelsen ikke kan komme i gang. Virker kun, mens appen er åben og skærmen tændt.</small></span></label>
-      <label class="check"><input type="checkbox" id="opt-alarm-vibrate">
-        <span>Alarm med vibration</span></label>
-      <label class="check"><input type="checkbox" id="opt-alarm-sound">
-        <span>Alarm med lyd (bip)<small>Brug telefonens lydstyrke for medier. Er telefonen på lydløs, kan bippet være slukket.</small></span></label>
-      <label class="field">Alarm efter så lang tid uden tale
-        <select id="opt-alarm-secs">
-          <option value="30">30 sekunder</option>
-          <option value="60">1 minut</option>
-          <option value="90">1½ minut</option>
-          <option value="120">2 minutter</option>
-          <option value="300">5 minutter</option>
-        </select>
-      </label>
-      <div class="row">
-        <button type="button" class="secondary" id="alarm-test">Prøv alarmen</button>
-      </div>
-      <label class="check"><input type="checkbox" id="opt-crt">
-        <span>Skærmlinjer og glød<small>Kun i Terminal-udseendet. Slå fra, hvis teksten er svær at læse.</small></span></label>
-      <label class="check"><input type="checkbox" id="opt-boot">
-        <span>Opstartsskærm<small>Kort tekst som i en film, når appen åbnes. Kun i Terminal-udseendet.</small></span></label>
-      <label class="check"><input type="checkbox" id="opt-rain">
-        <span>Faldende kode i baggrunden<small>Kun i Matrix-udseendet. Står stille, mens der lyttes.</small></span></label>
-      <label class="field">Egne ord <span class="hint">(ét ord pr. linje: <code>forkert = rigtigt</code>)</span>
-        <textarea id="opt-words" rows="5" placeholder="øjen = Jørgen&#10;søren = Søren"></textarea>
-      </label>
-      <p class="status">Bruges på ny tekst, mens der tales. Til tekst, der allerede står der, tryk på knappen.</p>
-      <div class="row">
-        <button type="button" class="secondary" id="fix-words">Ret egne ord i hele teksten</button>
-      </div>
-      <p id="fix-result" class="status" hidden></p>
-      <details class="commands" id="mic-box">
-        <summary>Mikrofontest</summary>
-        <p class="status">Viser, hvilken mikrofon browseren bruger, og om den kan høre dig. Tal, mens kollegaerne også taler. Lyden bliver på enheden.</p>
-        <label class="field">Mikrofon
-          <select id="mic-device"><option value="">Standard (den browseren bruger)</option></select>
-        </label>
-        <label class="check"><input type="checkbox" id="mic-raw">
-          <span>Slå ekko- og støjfjernelse fra under testen<small>Kan din stemme kun høres uden, er det browserens lydbehandling, der fjerner den.</small></span></label>
-        <div class="row">
-          <button type="button" class="secondary" id="mic-start">Start mikrofontest</button>
-          <button type="button" class="secondary" id="mic-rec" disabled>Optag 5 sek. og afspil</button>
-        </div>
-        <p id="mic-info" class="status" hidden></p>
-        <div class="meter" id="mic-meter" hidden><div id="mic-bar"></div></div>
-        <p id="mic-peak" class="status" hidden></p>
-        <audio id="mic-audio" controls hidden></audio>
-      </details>
-      <details class="commands" id="log-box">
-        <summary>Kørselslog</summary>
-        <p class="status">Tidspunkter for start, stop, genstart og fejl. Selve teksten står ikke i loggen. Den hjælper, hvis en lang optagelse stoppede, og du vil se hvorfor.</p>
-        <pre id="log-view" tabindex="0"></pre>
-        <div class="row">
-          <button type="button" class="secondary small" id="log-copy">Kopiér log</button>
-          <button type="button" class="secondary small" id="log-clear">Ryd log</button>
-        </div>
-      </details>
-      <details class="commands">
-        <summary>Stemmekommandoer (kan slås fra)</summary>
-        <table>
-          <tr><td>punktum</td><td><code>.</code></td></tr>
-          <tr><td>komma</td><td><code>,</code></td></tr>
-          <tr><td>kolon</td><td><code>:</code></td></tr>
-          <tr><td>semikolon</td><td><code>;</code></td></tr>
-          <tr><td>udråbstegn</td><td><code>!</code></td></tr>
-          <tr><td>spørgsmålstegn</td><td><code>?</code></td></tr>
-          <tr><td>ny linje</td><td>skifter linje</td></tr>
-          <tr><td>nyt afsnit</td><td>tom linje</td></tr>
-        </table>
-      </details>
-    </details>
-
-    <footer>
-      <p>Filen må ikke lægges direkte i vidensbasen. Giv den til assistenten, som tjekker for navne og private oplysninger først.</p>
-      <p>Skærmen skal være tændt, og appen skal være åben, mens der tales.</p>
-      <p>Teksten bliver gemt løbende på denne enhed, så den er der igen, hvis du lukker appen. Tryk <em>Ny optagelse</em> for at slette den.</p>
-      <p id="version" class="version"></p>
-    </footer>
+    <textarea id="text" spellcheck="false" aria-label="Notens tekst" placeholder="Tryk på start, og tal."></textarea>
+    <p id="interim" aria-hidden="true"></p>
   </main>
+
+  <section id="controls">
+    <p id="info" role="status" aria-live="polite">■ Stoppet · 0 ord</p>
+    <button type="button" id="mic" title="Start og stop (Ctrl+Mellemrum)">● START</button>
+    <div class="row">
+      <button type="button" id="copy">Kopiér alt</button>
+      <button type="button" id="download" title="Download noten som .md-fil">Download</button>
+      <button type="button" id="delete">Slet</button>
+    </div>
+    <p id="foot">Lyden sendes til browserens tale-tjeneste. <span id="version"></span></p>
+  </section>
+
+  <aside id="panel" hidden>
+    <div class="panel-bar">
+      <h2>Noter</h2>
+      <button type="button" id="panel-new">+ Ny note</button>
+      <button type="button" id="panel-close" aria-label="Luk">✕</button>
+    </div>
+    <ul id="list"></ul>
+  </aside>
 </body>
 </html>
