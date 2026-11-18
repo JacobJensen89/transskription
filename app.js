@@ -1,229 +1,199 @@
-// Styrer siden: live-tekst med browserens talegenkendelse, stemmekommandoer,
-// egne ord, markeringer og at gemme resultatet som en .md-fil.
+// Dansk tale til tekst med browserens talegenkendelse. Noter gemmes i browseren på enheden.
 
-// Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se i
-// bunden af siden, om browseren har hentet den nyeste.
-const VERSION = 19;
+// Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se, om den nyeste er hentet.
+const VERSION = 20;
 
-// Browserens indbyggede talegenkendelse. Den er god til dansk, men lyden sendes
-// til browserens leverandør. Derfor spørger appen, før den bruges første gang.
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-const PARAGRAPH_S = 60; // Nyt afsnit med tidsstempel cirka hvert minut.
-// Tale-tjenesten melder ofte først en sætning «færdig» efter lang tid, eller slet ikke, før
-// genkendelsen lukker. Derfor gemmes uafsluttet tekst efter en pause og med jævne mellemrum.
-const PAUSE_MS = 1500;
-const SNAPSHOT_MS = 10000;
-// Sker der slet ingen hændelser fra genkendelsen i så lang tid (hverken lyd, tale eller resultater),
-// kan den være hængt uden at give besked. På computer startes den så forfra.
-const STALL_MS = 40000;
+const MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+// Skjult test: ?kort lader genkendelsen lukke efter hver sætning i stedet for at køre i ét stræk.
+const SHORT = new URLSearchParams(location.search).has('kort');
+
+const RESTART_MS = 150;     // Pause før genstart, når browseren har lukket genkendelsen.
+const PAUSE_MS = 1500;      // Uafsluttet tekst gemmes efter så lang pause.
+const SNAPSHOT_MS = 10000;  // ... og med dette mellemrum under sammenhængende tale.
+const WATCHDOG_MS = 3000;   // Vagten tjekker så ofte, om genkendelsen stadig kører.
+const STALL_MS = 40000;     // Ingen livstegn så længe: start forfra.
 
 const $ = (id) => document.getElementById(id);
 
-// På en telefon slukker systemet mikrofonen, når appen skjules. På en computer fortsætter
-// den, også når fanen ligger bag en anden, fx et møde i et andet vindue.
-const MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+// ---------- Noter ----------
 
-let live = null;
-let liveAccepted = false;
-let gaps = []; // Tidsrum, hvor appen var i baggrunden.
-let wakeLock = null;
+const NOTES_KEY = 'noter';
+const ACTIVE_KEY = 'aktiv-note';
+let notes = [];
+let activeId = null;
+let saveTimer = null;
+let storageFailed = false;
 
-// ---------- Indstillinger ----------
-
-const SETTINGS_KEY = 'transskription-indstillinger';
-const DEFAULT_SETTINGS = {
-  commands: true, capitals: true, period: true, longest: false,
-  fontSize: 17, theme: 'terminal', crt: true, boot: true, rain: true, words: '',
-  alarm: true, alarmSecs: 60, alarmVibrate: true, alarmSound: true, listenMode: 'short',
-};
-let settings = { ...DEFAULT_SETTINGS };
 try {
-  const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-  // Version 11 havde Matrix som standard og gemte det sammen med andre indstillinger.
-  // Det er ikke et aktivt valg, så det skifter til det nye standardudseende.
-  if (stored.v !== 2 && stored.theme === 'matrix') delete stored.theme;
-  Object.assign(settings, stored);
-} catch { /* standardindstillinger */ }
-settings.v = 2;
+  const stored = JSON.parse(localStorage.getItem(NOTES_KEY) || '[]');
+  if (Array.isArray(stored)) notes = stored.filter((n) => n && typeof n.id === 'string');
+  activeId = localStorage.getItem(ACTIVE_KEY);
+} catch { /* ingen gemte noter */ }
 
-function saveSettings() {
-  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* ikke afgørende */ }
+function newNote() {
+  const now = Date.now();
+  const note = { id: now.toString(36) + Math.random().toString(36).slice(2, 6), text: '', created: now, updated: now };
+  notes.push(note);
+  return note;
 }
 
-function applySettings() {
-  $('opt-commands').checked = settings.commands;
-  $('opt-capitals').checked = settings.capitals;
-  $('opt-period').checked = settings.period;
-  $('opt-longest').checked = settings.longest;
-  $('opt-font').value = settings.fontSize;
-  $('opt-theme').value = settings.theme;
-  $('opt-rain').checked = settings.rain;
-  $('opt-crt').checked = settings.crt;
-  $('opt-boot').checked = settings.boot;
-  $('opt-alarm').checked = settings.alarm;
-  $('opt-alarm-secs').value = String(settings.alarmSecs);
-  $('opt-mode').value = settings.listenMode;
-  $('opt-alarm-vibrate').checked = settings.alarmVibrate;
-  $('opt-alarm-sound').checked = settings.alarmSound;
-  $('opt-words').value = settings.words;
-  $('font-label').textContent = settings.fontSize + ' px';
-  $('text').style.fontSize = settings.fontSize + 'px';
-  if (settings.theme === 'auto') delete document.documentElement.dataset.theme;
-  else document.documentElement.dataset.theme = settings.theme;
-  document.documentElement.dataset.crt = settings.crt ? 'on' : 'off';
-  document.querySelector('meta[name="theme-color"]')
-    .setAttribute('content', ['terminal', 'matrix', 'dark'].includes(settings.theme) ? '#000000' : '#1f5f8b');
-  wordRules = null;
-  updateRain();
-}
-
-// ---------- Opstartsskærm ----------
-
-const BOOT_KEY = 'transskription-opstart';
-const BOOT_PAUSE_MS = 30 * 60 * 1000; // Vises højst hvert halve time.
-
-// Kort tekst som i en film. Den dækker skærmen, men tryk går igennem til siden
-// bagved, og den forsvinder af sig selv efter cirka halvandet sekund.
-function runBoot() {
-  const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (settings.theme !== 'terminal' || !settings.boot || calm) return;
+// Tidligere udgaver gemte ét udkast og en række indstillinger. Udkastet bliver til en note.
+function migrateOldVersion() {
   try {
-    if (Date.now() - Number(localStorage.getItem(BOOT_KEY) || 0) < BOOT_PAUSE_MS) return;
-    localStorage.setItem(BOOT_KEY, String(Date.now()));
-  } catch { /* vis den bare */ }
-  const lines = [
-    `TRANSSKRIPTION OS v${VERSION}.0`,
-    '> mount /dev/mic .............. OK',
-    '> load tale-modul (da-DK) ..... OK',
-    `> tale-tjeneste: ${liveService()} ....... STANDBY`,
-    '> klar_',
-  ];
-  const boot = $('boot');
-  const log = $('boot-log');
-  boot.hidden = false;
-  boot.classList.remove('done');
-  lines.forEach((line, i) => setTimeout(() => { log.textContent += line + '\n'; }, 150 * (i + 1)));
-  setTimeout(() => boot.classList.add('done'), 1300);
-  setTimeout(() => { boot.hidden = true; log.textContent = ''; }, 1700);
+    const raw = localStorage.getItem('transskription-udkast');
+    if (raw && !notes.length) {
+      const d = JSON.parse(raw);
+      const text = [d.title, d.text].filter((s) => s && s.trim()).join('\n\n');
+      if (text) {
+        const note = newNote();
+        note.text = text;
+        note.created = note.updated = d.saved || Date.now();
+        activeId = note.id;
+      }
+    }
+    ['transskription-udkast', 'transskription-indstillinger', 'transskription-log', 'transskription-opstart']
+      .forEach((k) => localStorage.removeItem(k));
+  } catch { /* intet at flytte */ }
 }
 
-// ---------- Matrix-regn ----------
-
-// Tegnene falder i baggrunden bag kortene. Den står stille, mens der lyttes, når
-// siden er skjult, eller hvis telefonen er sat til færre animationer.
-const RAIN_CHARS = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789';
-const RAIN_SIZE = 16;
-const rain = { timer: null, drops: [], ctx: $('rain').getContext('2d') };
-
-function resizeRain() {
-  const canvas = $('rain');
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-  rain.drops = Array.from({ length: Math.ceil(canvas.width / RAIN_SIZE) }, () => Math.random() * -50);
-  rain.ctx.fillStyle = '#000';
-  rain.ctx.fillRect(0, 0, canvas.width, canvas.height);
+function current() {
+  let note = notes.find((n) => n.id === activeId);
+  if (!note) {
+    note = notes[notes.length - 1] || newNote();
+    activeId = note.id;
+  }
+  return note;
 }
 
-function drawRain() {
-  const { ctx } = rain;
-  const { width, height } = $('rain');
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
-  ctx.fillRect(0, 0, width, height);
-  ctx.fillStyle = '#00ff41';
-  ctx.font = `${RAIN_SIZE}px monospace`;
-  rain.drops.forEach((y, i) => {
-    ctx.fillText(RAIN_CHARS[Math.floor(Math.random() * RAIN_CHARS.length)], i * RAIN_SIZE, y * RAIN_SIZE);
-    rain.drops[i] = y * RAIN_SIZE > height && Math.random() > 0.975 ? 0 : y + 1;
-  });
-}
-
-function updateRain() {
-  const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const want = settings.theme === 'matrix' && settings.rain && !live && !document.hidden && !calm;
-  if (want && !rain.timer) {
-    if (!rain.drops.length) resizeRain();
-    rain.timer = setInterval(drawRain, 90);
-  } else if (!want && rain.timer) {
-    clearInterval(rain.timer);
-    rain.timer = null;
+function saveNow() {
+  clearTimeout(saveTimer);
+  try {
+    localStorage.setItem(NOTES_KEY, JSON.stringify(notes));
+    localStorage.setItem(ACTIVE_KEY, activeId || '');
+    storageFailed = false;
+  } catch {
+    storageFailed = true;
   }
 }
 
-function bindSettings() {
-  const checks = { 'opt-commands': 'commands', 'opt-capitals': 'capitals', 'opt-period': 'period', 'opt-longest': 'longest' };
-  for (const [id, key] of Object.entries(checks)) {
-    $(id).onchange = () => { settings[key] = $(id).checked; saveSettings(); };
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveNow, 300);
+}
+
+function titleOf(note, max = 40) {
+  const line = (note.text.split('\n').find((l) => l.trim()) || '').trim();
+  if (!line) return 'Ny note';
+  return line.length > max ? line.slice(0, max).trimEnd() + '…' : line;
+}
+
+function countWords(text) {
+  return (text.match(/\S+/g) || []).length;
+}
+
+function formatDate(ts) {
+  return new Date(ts).toLocaleString('da-DK', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function renderTitle() {
+  $('title').textContent = titleOf(current());
+  document.title = 'Transskription';
+}
+
+function renderList() {
+  $('list').replaceChildren(...[...notes].sort((a, b) => b.updated - a.updated).map((n) => {
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    if (n.id === activeId) btn.className = 'active';
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = titleOf(n);
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    meta.textContent = `${formatDate(n.updated)} · ${countWords(n.text)} ord`;
+    btn.append(name, meta);
+    btn.onclick = () => openNote(n.id);
+    li.append(btn);
+    return li;
+  }));
+}
+
+function showNote() {
+  const note = current();
+  $('text').value = note.text;
+  renderTitle();
+  renderInfo();
+}
+
+function openNote(id) {
+  flushPending();
+  saveNow();
+  activeId = id;
+  rs.last = null;
+  saveNow();
+  showNote();
+  closePanel();
+}
+
+function createNote() {
+  // En tom note bruges igen i stedet for at samle tomme noter.
+  const note = current();
+  if (!note.text.trim()) {
+    closePanel();
+    $('text').focus();
+    return;
   }
-  $('opt-font').oninput = () => { settings.fontSize = Number($('opt-font').value); saveSettings(); applySettings(); };
-  $('opt-theme').onchange = () => { settings.theme = $('opt-theme').value; saveSettings(); applySettings(); };
-  $('opt-rain').onchange = () => { settings.rain = $('opt-rain').checked; saveSettings(); updateRain(); };
-  $('opt-crt').onchange = () => { settings.crt = $('opt-crt').checked; saveSettings(); applySettings(); };
-  $('opt-boot').onchange = () => { settings.boot = $('opt-boot').checked; saveSettings(); };
-  $('opt-alarm').onchange = () => { settings.alarm = $('opt-alarm').checked; saveSettings(); };
-  $('opt-mode').onchange = () => { settings.listenMode = $('opt-mode').value; saveSettings(); };
-  $('opt-alarm-vibrate').onchange = () => { settings.alarmVibrate = $('opt-alarm-vibrate').checked; saveSettings(); };
-  $('opt-alarm-sound').onchange = () => { settings.alarmSound = $('opt-alarm-sound').checked; saveSettings(); };
-  $('opt-alarm-secs').onchange = () => { settings.alarmSecs = Number($('opt-alarm-secs').value); saveSettings(); };
-  $('alarm-test').onclick = async () => {
-    unlockAudio();
-    const r = await ring();
-    const text = `Prøvealarm. Vibration: ${r.vibration}. Lyd: ${r.audio}. Mærkede og hørte du den?`;
-    logEvent(text);
-    showAlarmBanner(text, 'OK');
-  };
-  $('alarm-stop').onclick = silenceAlarm;
-  $('log-copy').onclick = copyLog;
-  $('mic-start').onclick = () => (mic.stream ? micStop() : micStart());
-  $('mic-rec').onclick = micRecord;
-  $('mic-box').addEventListener('toggle', () => { if (!$('mic-box').open) micStop(); });
-  $('log-clear').onclick = () => { runLog = []; persistLog(); renderLog(); };
-  $('opt-words').oninput = () => { settings.words = $('opt-words').value; wordRules = null; saveSettings(); };
-  $('fix-words').onclick = fixWordsInText;
+  flushPending();
+  const fresh = newNote();
+  activeId = fresh.id;
+  rs.last = null;
+  saveNow();
+  showNote();
+  closePanel();
+}
+
+function deleteNote() {
+  const note = current();
+  if (note.text.trim() && !confirm('Slet denne note?')) return;
+  flushPending();
+  notes = notes.filter((n) => n.id !== note.id);
+  activeId = notes.length ? [...notes].sort((a, b) => b.updated - a.updated)[0].id : null;
+  rs.last = null;
+  current();
+  saveNow();
+  showNote();
+}
+
+function openPanel() {
+  renderList();
+  $('panel').hidden = false;
+}
+
+function closePanel() {
+  $('panel').hidden = true;
+}
+
+// Alt, der ændrer teksten, går gennem denne: gem og opdatér tæller og titel.
+function textChanged() {
+  const note = current();
+  note.text = $('text').value;
+  note.updated = Date.now();
+  renderTitle();
+  renderInfo();
+  scheduleSave();
 }
 
 // ---------- Tekstbehandling ----------
 
 const WORD_EDGE = (word) => `(?<![\\p{L}\\p{N}])${word}(?![\\p{L}\\p{N}])`;
-const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-let wordRules = null;
-
-// «forkert = rigtigt», ét par pr. linje.
-function getWordRules() {
-  if (wordRules) return wordRules;
-  wordRules = [];
-  for (const line of settings.words.split('\n')) {
-    const parts = line.split(/\s*(?:=|→|->)\s*/);
-    if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) continue;
-    const from = escapeRegExp(parts[0].trim()).replace(/\s+/g, '\\s+');
-    wordRules.push([new RegExp(WORD_EDGE(from), 'giu'), parts[1].trim()]);
-  }
-  return wordRules;
-}
-
-function applyWords(text) {
-  let count = 0;
-  for (const [re, to] of getWordRules()) {
-    text = text.replace(re, () => { count++; return to; });
-  }
-  return { text, count };
-}
-
-function fixWordsInText() {
-  const { text, count } = applyWords($('text').value);
-  $('text').value = text;
-  $('fix-result').hidden = false;
-  $('fix-result').textContent = getWordRules().length
-    ? `${count} ord rettet.`
-    : 'Skriv først mindst ét par, fx «øjen = Jørgen».';
-  updateButtons();
-}
-
-// Stemmekommandoer. Ordene erstattes af tegnet, og mellemrum rettes til.
 const COMMANDS = [
   ['spørgsmålstegn', '?'], ['udråbstegn', '!'], ['semikolon', ';'], ['kolon', ':'],
-  ['punktum', '.'], ['komma', ','], ['nyt\\s+afsnit', '\n\n'], ['ny\\s+linje', '\n'],
+  ['punktum', '.'], ['komma', ','], ['nyt\\s+afsnit', '\n\n'], ['(?:ny\\s+linje|linjeskift)', '\n'],
 ].map(([word, symbol]) => [new RegExp(WORD_EDGE(word), 'giu'), symbol]);
 
+// Stemmekommandoer: ordet erstattes af tegnet, og mellemrum før tegnsætning fjernes.
 function applyCommands(text) {
   for (const [re, symbol] of COMMANDS) text = text.replace(re, `\u0001${symbol}\u0001`);
   return text
@@ -231,460 +201,23 @@ function applyCommands(text) {
     .replace(/\s*\u0001([.,:;!?])\u0001\s*/g, '$1 ')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n[ \t]+/g, '\n')
-    .replace(/[ \t]+$/, '');
+    .replace(/[ \t]+$/, '')
+    .replace(/^[ \t]+/, '');
 }
 
-function capitalize(text) {
-  return text.replace(/(^|[.!?]\s+|\n)(\p{L})/gu, (m, before, letter) => before + letter.toUpperCase());
+// Stort begyndelsesbogstav efter punktum, spørgsmålstegn, udråbstegn og ny linje.
+function capitalizeInner(text) {
+  return text.replace(/([.!?]\s+|\n)(\p{L})/gu, (m, before, letter) => before + letter.toUpperCase());
 }
 
 function formatSegment(raw) {
-  let t = applyWords(raw.trim()).text;
-  if (settings.commands) t = applyCommands(t);
-  t = t.replace(/^[ \t]+/, '');
-  if (!t) return '';
-  if (settings.capitals) t = capitalize(t);
-  if (settings.period && !/[.!?…:;,\n]$/.test(t)) t += '.';
-  return t;
+  const t = applyCommands(raw.trim());
+  return t ? capitalizeInner(t) : '';
 }
 
-// ---------- Kørselslog ----------
-
-// Hændelser uden selve teksten, så man bagefter kan se, hvorfor en lang optagelse stoppede.
-const LOG_KEY = 'transskription-log';
-const LOG_MAX = 600;
-let runLog = [];
-try { runLog = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch { runLog = []; }
-let logTimer = null;
-
-function logEvent(msg) {
-  runLog.push({ ts: Date.now(), el: live ? live.elapsed() : null, msg });
-  if (runLog.length > LOG_MAX) runLog.splice(0, runLog.length - LOG_MAX);
-  clearTimeout(logTimer);
-  logTimer = setTimeout(persistLog, 1000);
-  renderLog();
-}
-
-function persistLog() {
-  try { localStorage.setItem(LOG_KEY, JSON.stringify(runLog)); } catch { /* ikke afgørende */ }
-}
-
-function formatLogLine({ ts, el, msg }) {
-  const when = new Date(ts).toLocaleString('da-DK', {
-    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
-  });
-  return `${when}${el === null ? '' : ` [${clock(el)}]`} ${msg}`;
-}
-
-function renderLog() {
-  const view = $('log-view');
-  view.textContent = runLog.length ? runLog.map(formatLogLine).join('\n') : 'Ingen hændelser endnu.';
-  view.scrollTop = view.scrollHeight;
-}
-
-async function copyLog() {
-  const head = `Transskription version ${VERSION}\n${navigator.userAgent}\n\n`;
-  try {
-    await navigator.clipboard.writeText(head + runLog.map(formatLogLine).join('\n'));
-    $('log-copy').textContent = 'Kopieret ✓';
-  } catch {
-    $('log-copy').textContent = 'Kunne ikke kopiere';
-  }
-  setTimeout(() => ($('log-copy').textContent = 'Kopiér log'), 2000);
-}
-
-// ---------- Mikrofontest ----------
-
-// Viser, hvad browseren hører, så man kan se, om ens egen stemme når frem, når der også kommer
-// lyd ud af højttalerne. Lyden bliver på enheden.
-const mic = { stream: null, ctx: null, raf: 0, peak: -Infinity, stopTimer: null, recorder: null };
-
-async function fillMicDevices() {
-  try {
-    const keep = $('mic-device').value;
-    const inputs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput');
-    $('mic-device').replaceChildren(new Option('Standard (den browseren bruger)', ''),
-      ...inputs.map((d, i) => new Option(d.label || `Mikrofon ${i + 1}`, d.deviceId)));
-    $('mic-device').value = inputs.some((d) => d.deviceId === keep) ? keep : '';
-  } catch { /* uden liste */ }
-}
-
-async function micStart() {
-  if (live) {
-    $('mic-info').hidden = false;
-    $('mic-info').textContent = 'Stop live-tekst først. Mikrofonen kan kun bruges af én ad gangen.';
-    return;
-  }
-  micStop();
-  const raw = $('mic-raw').checked;
-  const deviceId = $('mic-device').value;
-  try {
-    mic.stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
-        echoCancellation: !raw, noiseSuppression: !raw, autoGainControl: !raw,
-      },
-    });
-  } catch (err) {
-    $('mic-info').hidden = false;
-    $('mic-info').textContent = 'Mikrofonen kunne ikke åbnes: ' + (err.name || 'fejl');
-    return;
-  }
-  await fillMicDevices();
-  const track = mic.stream.getAudioTracks()[0];
-  const s = track.getSettings();
-  const on = (v) => (v ? 'til' : 'fra');
-  mic.label = track.label || 'ukendt';
-  $('mic-info').hidden = false;
-  $('mic-info').textContent = `Bruger: ${mic.label} · ekkofjernelse ${on(s.echoCancellation)}, `
-    + `støjfjernelse ${on(s.noiseSuppression)}, automatisk lydstyrke ${on(s.autoGainControl)}`;
-  mic.ctx = new (window.AudioContext || window.webkitAudioContext)();
-  const analyser = mic.ctx.createAnalyser();
-  analyser.fftSize = 2048;
-  mic.ctx.createMediaStreamSource(mic.stream).connect(analyser);
-  const buf = new Float32Array(analyser.fftSize);
-  mic.peak = -Infinity;
-  const draw = () => {
-    analyser.getFloatTimeDomainData(buf);
-    let sum = 0;
-    for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
-    const db = 20 * Math.log10(Math.max(Math.sqrt(sum / buf.length), 1e-5));
-    mic.peak = Math.max(mic.peak, db);
-    $('mic-bar').style.width = Math.max(0, Math.min(100, ((db + 60) / 60) * 100)) + '%';
-    $('mic-peak').textContent = `Højeste niveau: ${Math.round(mic.peak)} dB. Under −50 dB hører browseren næsten intet. En stemme tæt på ligger typisk mellem −30 og −10 dB.`;
-    mic.raf = requestAnimationFrame(draw);
-  };
-  $('mic-meter').hidden = false;
-  $('mic-peak').hidden = false;
-  $('mic-start').textContent = 'Stop mikrofontest';
-  $('mic-rec').disabled = false;
-  draw();
-  mic.stopTimer = setTimeout(micStop, 120000);
-}
-
-function micRecord() {
-  if (!mic.stream || mic.recorder) return;
-  const parts = [];
-  const rec = new MediaRecorder(mic.stream);
-  mic.recorder = rec;
-  rec.ondataavailable = (e) => e.data.size && parts.push(e.data);
-  rec.onstop = () => {
-    mic.recorder = null;
-    $('mic-rec').textContent = 'Optag 5 sek. og afspil';
-    const audioEl = $('mic-audio');
-    if (audioEl.src) URL.revokeObjectURL(audioEl.src);
-    audioEl.src = URL.createObjectURL(new Blob(parts, { type: rec.mimeType }));
-    audioEl.hidden = false;
-    audioEl.play().catch(() => { /* afspilles ved tryk */ });
-  };
-  rec.start();
-  $('mic-rec').textContent = 'Optager …';
-  setTimeout(() => rec.state === 'recording' && rec.stop(), 5000);
-}
-
-function micStop() {
-  if (!mic.stream) return;
-  clearTimeout(mic.stopTimer);
-  cancelAnimationFrame(mic.raf);
-  if (mic.recorder?.state === 'recording') mic.recorder.stop();
-  mic.stream.getTracks().forEach((t) => t.stop());
-  mic.ctx?.close();
-  logEvent(`Mikrofontest: ${mic.label}, højeste niveau ${Number.isFinite(mic.peak) ? Math.round(mic.peak) : '?'} dB`);
-  mic.stream = null;
-  mic.ctx = null;
-  $('mic-start').textContent = 'Start mikrofontest';
-  $('mic-rec').disabled = true;
-  $('mic-bar').style.width = '0';
-}
-
-// ---------- Alarm ----------
-
-// Bip og vibration, hvis der ikke kommer tale, eller genkendelsen ikke kan komme i gang.
-// Den virker kun, mens appen er åben og skærmen tændt. Telefonen sætter JavaScript på pause
-// i baggrunden, og så kan appen hverken måle stilhed eller larme.
-const ALARM_REPEAT_MS = 30000;
-const FAIL_LIMIT = 3; // Så mange hurtige genstarter i træk regnes for en fejl.
-const audio = { ctx: null };
-
-function unlockAudio() {
-  try {
-    audio.ctx ??= new (window.AudioContext || window.webkitAudioContext)();
-    audio.ctx.resume();
-  } catch { /* uden lyd, kun vibration */ }
-}
-
-// Giver tilbage, hvad browseren sagde, så prøvealarmen og loggen kan vise det.
-const VIBRATION_PATTERN = [700, 200, 700, 200, 700, 200, 700];
-
-async function ring() {
-  const result = { vibration: 'slået fra', audio: 'slået fra' };
-  if (settings.alarmSound) {
-    try {
-      unlockAudio();
-      const ctx = audio.ctx;
-      await ctx.resume();
-      [[0, 880], [0.4, 660], [0.8, 880]].forEach(([delay, hz]) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'square';
-        osc.frequency.value = hz;
-        gain.gain.value = 0.4;
-        osc.connect(gain).connect(ctx.destination);
-        osc.start(ctx.currentTime + delay);
-        osc.stop(ctx.currentTime + delay + 0.3);
-      });
-      result.audio = ctx.state === 'running' ? 'afspillet (hvis medielyd ikke er slukket)' : `blokeret af browseren (${ctx.state})`;
-    } catch (err) {
-      result.audio = 'kunne ikke afspilles (' + (err?.name || 'fejl') + ')';
-    }
-  }
-  if (settings.alarmVibrate) {
-    try {
-      result.vibration = !navigator.vibrate ? 'understøttes ikke af browseren'
-        : navigator.vibrate(VIBRATION_PATTERN) ? 'sendt til telefonen' : 'afvist af browseren';
-    } catch (err) {
-      result.vibration = 'fejl (' + (err?.name || 'ukendt') + ')';
-    }
-  }
-  return result;
-}
-
-function showAlarmBanner(text, buttonLabel) {
-  $('alarm-text').textContent = text;
-  $('alarm-stop').textContent = buttonLabel;
-  $('live-alarm').hidden = false;
-}
-
-function startAlarm(state, reason) {
-  if (!settings.alarm || state.alarmOn) return;
-  state.alarmOn = true;
-  logEvent('Alarm: ' + reason);
-  showAlarmBanner(reason, 'Stop alarm');
-  const sound = () => ring().then((r) => logEvent(`Alarm sendt: vibration ${r.vibration}; lyd ${r.audio}`));
-  sound();
-  state.alarmTimer = setInterval(sound, ALARM_REPEAT_MS);
-}
-
-function stopAlarm(state, why) {
-  if (!state.alarmOn) return;
-  state.alarmOn = false;
-  clearInterval(state.alarmTimer);
-  $('live-alarm').hidden = true;
-  logEvent('Alarm slut: ' + why);
-}
-
-// Knappen i alarmen: slukker den, og lader stilheds-uret begynde forfra.
-function silenceAlarm() {
-  if (live) {
-    live.lastSpeech = Date.now();
-    live.failStreak = 0;
-    stopAlarm(live, 'slukket med knap');
-  }
-  $('live-alarm').hidden = true;
-}
-
-// ---------- Live-tekst ----------
-
-function liveService() {
-  const ua = navigator.userAgent;
-  if (/iPhone|iPad/.test(ua)) return 'Apple';
-  if (/Macintosh/.test(ua) && !/Chrome|Edg/.test(ua)) return 'Apple';
-  if (/Edg\//.test(ua)) return 'Microsoft';
-  return 'Google';
-}
-
-function toggleLive() {
-  if (live) {
-    stopLive();
-    return;
-  }
-  if (!liveAccepted && !confirm(
-    `Live-tekst sender lyden til ${liveService()}, som laver den om til tekst. `
-    + 'Brug den kun, når det er i orden, at lyden forlader enheden. Fortsæt?',
-  )) return;
-  liveAccepted = true;
-  gaps = [];
-  $('live-warning').hidden = true;
-  const state = {
-    active: true, started: Date.now(), lastSpeech: Date.now(), paragraphStart: null, gapStart: null, timer: null,
-    failStreak: 0, restarts: 0, alarmOn: false, alarmTimer: null,
-    pendingText: '', pendingCommitted: '', flushTimer: null, snapshotAt: Date.now(), interimCommits: 0,
-    stats: { since: Date.now(), sessions: 0, results: 0, sound: 0, speech: 0, errors: {} },
-  };
-  state.elapsed = () => (Date.now() - state.started) / 1000;
-  live = state;
-  micStop();
-  unlockAudio();
-  $('live-alarm').hidden = true;
-  logEvent(`Start (${liveService()}, ${document.hidden ? 'skjult' : 'synlig'}, alarm ${settings.alarm ? settings.alarmSecs + ' s' : 'fra'})`);
-  updateRain();
-  startRecognition(state);
-  keepAwake(true);
-  $('live').textContent = '■ Stop live-tekst';
-  $('live').classList.add('recording');
-  $('live-status').hidden = false;
-  const tick = () => {
-    if (live !== state) return;
-    const quiet = (Date.now() - state.lastSpeech) / 1000;
-    $('live-status').textContent = 'Lytter … ' + clock(state.elapsed())
-      + (quiet > Math.min(60, settings.alarmSecs) ? ` · Ingen tale registreret i ${clock(quiet)}. Hører mikrofonen dig?` : '');
-    if (state.pendingText && Date.now() - state.snapshotAt >= SNAPSHOT_MS) flushPending(state);
-    restartIfStalled(state);
-    if (state.mode === 'short' && Date.now() - state.stats.since >= 60000) logMinute(state);
-    if (quiet >= settings.alarmSecs) startAlarm(state, `Ingen tale i ${clock(quiet)}. Hører mikrofonen dig?`);
-    else if (state.failStreak >= FAIL_LIMIT) startAlarm(state, 'Genkendelsen kommer ikke i gang igen.');
-  };
-  tick();
-  state.timer = setInterval(tick, 1000);
-}
-
-function startRecognition(state, silentLog = false) {
-  const rec = new SpeechRecognition();
-  rec.lang = 'da-DK';
-  // «Kort ad gangen»: genkendelsen lukker efter hver sætning og startes forfra med det samme.
-  state.mode = settings.listenMode;
-  rec.continuous = state.mode === 'long';
-  rec.interimResults = true;
-  rec.maxAlternatives = settings.longest ? 5 : 1;
-  const startedAt = Date.now();
-  if (!silentLog && (state.mode === 'long' || state.restarts === 0 || state.failStreak > 0)) {
-    logEvent(state.restarts === 0 ? `Genkendelse startet (${state.mode === 'short' ? 'kort ad gangen' : 'sammenhængende'})` : `Genkendelse startet igen (genstart nr. ${state.restarts})`);
-  }
-  // Hændelser tælles pr. start, så loggen kan vise, om browseren hørte lyd og tale uden at levere tekst.
-  const sess = { sound: 0, speech: 0, results: 0, lastEvent: Date.now() };
-  state.sess = sess;
-  rec.onsoundstart = () => { sess.sound++; sess.lastEvent = Date.now(); };
-  rec.onspeechstart = () => { sess.speech++; sess.lastEvent = Date.now(); };
-  rec.onresult = (e) => {
-    if (state.recognition !== rec) return;
-    sess.results++;
-    sess.lastEvent = Date.now();
-    let interim = '';
-    const quiet = (Date.now() - state.lastSpeech) / 1000;
-    if (quiet > 15) logEvent(`Tale igen efter ${clock(quiet)} uden tale`);
-    state.lastSpeech = Date.now();
-    state.failStreak = 0;
-    stopAlarm(state, 'tale registreret');
-    let sawFinal = false;
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      const r = e.results[i];
-      const text = bestAlternative(r);
-      if (r.isFinal) {
-        addLiveText(state, text);
-        sawFinal = true;
-      } else {
-        interim += text;
-      }
-    }
-    // Det uafsluttede gemmes efter en pause. Et færdigt resultat afløser det, der er gemt.
-    if (sawFinal) state.pendingCommitted = '';
-    state.pendingText = interim.trim();
-    clearTimeout(state.flushTimer);
-    if (state.pendingText) state.flushTimer = setTimeout(() => flushPending(state), PAUSE_MS);
-    $('live-interim').hidden = !interim;
-    $('live-interim').textContent = interim;
-  };
-  rec.onerror = (e) => {
-    if (state.recognition !== rec) return;
-    sess.lastEvent = Date.now();
-    state.stats.errors[e.error] = (state.stats.errors[e.error] || 0) + 1;
-    // «no-speech» og «aborted» hører til det normale, når browseren selv lukker. I «kort ad gangen»
-    // sker det hele tiden og tælles kun, ellers ville loggen blive fyldt.
-    const routine = e.error === 'no-speech' || e.error === 'aborted';
-    if (!(routine && state.mode === 'short')) logEvent(`Fejl fra genkendelsen: ${e.error}${e.message ? ' (' + e.message + ')' : ''}`);
-    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-      state.fatal = 'Browseren har ikke lov til at bruge mikrofonen eller tale-tjenesten. '
-        + 'På iPhone: slå Diktering til, eller åbn siden i Safari i stedet for appen.';
-    } else if (e.error === 'language-not-supported') {
-      state.fatal = 'Browseren kan ikke genkende dansk.';
-    } else if (e.error === 'network') {
-      $('live-status').textContent = 'Ingen forbindelse til tale-tjenesten. Prøver igen …';
-    }
-  };
-  // Browseren stopper selv efter en pause eller nogle minutter. Så startes den igen.
-  rec.onend = () => {
-    if (state.recognition !== rec) return;
-    $('live-interim').hidden = true;
-    if (!state.active) return;
-    const ranFor = (Date.now() - startedAt) / 1000;
-    const saved = state.interimCommits;
-    state.interimCommits = 0;
-    flushPending(state);
-    state.pendingText = '';
-    state.pendingCommitted = '';
-    const st = state.stats;
-    st.sessions++; st.results += sess.results; st.sound += sess.sound; st.speech += sess.speech;
-    // En omgang, der lukker med det samme uden at høre noget, er en fejl. Er der lyd eller tekst,
-    // er det normalt, især i «kort ad gangen».
-    const heard = sess.results + sess.sound + sess.speech > 0;
-    const quick = ranFor < 2 && !heard;
-    if (state.mode === 'long' || quick) {
-      logEvent(`Genkendelse sluttede efter ${clock(ranFor)} (lyd ${sess.sound}, tale ${sess.speech}, resultater ${sess.results}`
-        + `${saved ? `, ${saved} uafsluttede stykker gemt` : ''})`);
-    }
-    if (state.fatal) {
-      stopLive(state.fatal);
-    } else if (document.hidden && MOBILE) {
-      logEvent('Venter med genstart, til appen er synlig igen');
-      state.waiting = true;
-    } else {
-      // Hvis den stoppede med det samme uden at høre noget, ventes lidt, så den ikke prøver i ring.
-      state.failStreak = quick ? state.failStreak + 1 : 0;
-      state.restarts++;
-      setTimeout(() => state.active && startRecognition(state), quick ? 2000 : 50);
-    }
-  };
-  state.recognition = rec;
-  try {
-    rec.start();
-  } catch (err) {
-    stopLive('Live-tekst kunne ikke starte: ' + err.message);
-  }
-}
-
-// I «kort ad gangen» er der mange små omgange. Loggen får kun et resumé hvert minut.
-function logMinute(state) {
-  const st = state.stats;
-  const errors = Object.entries(st.errors).map(([k, v]) => `${k} ${v}`).join(', ') || 'ingen';
-  logEvent(`Seneste minut: ${st.sessions} omgange, lyd ${st.sound}, tale ${st.speech}, resultater ${st.results}, `
-    + `fejl: ${errors}. Ord i alt: ${countWords($('text').value)}`);
-  state.stats = { since: Date.now(), sessions: 0, results: 0, sound: 0, speech: 0, errors: {} };
-}
-
-// Starter genkendelsen forfra, hvis den ikke har givet livstegn i lang tid. Hændelser fra den gamle
-// ignoreres, så der ikke kommer dobbelt op.
-function restartIfStalled(state) {
-  if (MOBILE || !state.sess || !state.recognition || state.waiting) return;
-  const idle = Date.now() - state.sess.lastEvent;
-  if (idle < STALL_MS) return;
-  state.stalls = (state.stalls || 0) + 1;
-  logEvent(`Ingen hændelser fra genkendelsen i ${clock(idle / 1000)} (lyd ${state.sess.sound}, tale ${state.sess.speech}, `
-    + `resultater ${state.sess.results}): starter den forfra (nr. ${state.stalls})`);
-  flushPending(state);
-  state.pendingText = '';
-  state.pendingCommitted = '';
-  const old = state.recognition;
-  state.restarts++;
-  startRecognition(state, true);
-  try { old.abort(); } catch { /* allerede lukket */ }
-}
-
-// Med «vælg den længste udgave» tages den længste af de foreslåede udgaver.
-function bestAlternative(result) {
-  let best = result[0].transcript;
-  if (settings.longest) {
-    for (let i = 1; i < result.length; i++) {
-      if (result[i].transcript.length > best.length) best = result[i].transcript;
-    }
-  }
-  return best;
-}
-
-// Google retter nogle gange en sætning, efter den er sendt som endelig, fx ved at
-// tilføje et ord eller skifte store og små bogstaver. Så er den nye ikke en ren
-// forlængelse af den gamle, men de to har næsten alle ord til fælles i samme
-// rækkefølge. Sætninger under fire ord sammenlignes ikke, så korte svar som
-// "Ja" og "Nej" ikke bliver slået sammen.
+// Google retter nogle gange en sætning, efter den er sendt, fx ved at tilføje et ord. Så er den
+// nye ikke en ren forlængelse, men de to har næsten alle ord til fælles i samme rækkefølge.
+// Sætninger under fire ord sammenlignes ikke, så korte svar ikke slås sammen.
 function mostlySame(a, b) {
   const x = a.split(' ');
   const y = b.split(' ');
@@ -700,141 +233,264 @@ function mostlySame(a, b) {
   return prev[y.length] / Math.min(x.length, y.length) >= 0.75;
 }
 
-// Gemmer det uafsluttede, så det ikke går tabt. Vokser sætningen, erstatter den nye udgave
-// den gemte, så der ikke kommer dobbelttekst.
-function flushPending(state) {
-  clearTimeout(state.flushTimer);
-  const text = state.pendingText;
-  if (!text || text === state.pendingCommitted) return;
-  state.pendingCommitted = text;
-  state.snapshotAt = Date.now();
-  state.interimCommits++;
-  addLiveText(state, text);
-}
-
-function addLiveText(state, transcript) {
-  const t = formatSegment(transcript);
+// Sætter en sætning ind i noten: ved markøren, hvis feltet er i fokus, ellers til sidst. Vokser
+// en sætning (Chrome på Android sender den flere gange), erstatter den nye udgave den forrige.
+function commit(raw) {
+  const t = formatSegment(raw);
   if (!t) return;
-  const now = state.elapsed();
   const box = $('text');
-  // Chrome på Android sender den samme sætning flere gange, efterhånden som den
-  // vokser ("Skal", "Skal jeg", "Skal jeg synge"). Er den nye en forlængelse af
-  // den forrige, erstattes den forrige. Er den en ældre, kortere udgave, droppes den.
-  // Det sker kun, hvis ingen har rettet i teksten imens.
   const norm = t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-  // Rettelser og forlængelser hører til samme omgang. En ny omgang er ny tale, også hvis den
-  // minder om den forrige («Ja det er fint» og «Ja det er rigtigt»).
-  const last = state.last?.sess === state.sess ? state.last : null;
-  if (last && norm && box.value.length === last.end) {
+  const last = rs.last && rs.last.sess === rs.sess && rs.last.noteId === activeId ? rs.last : null;
+  const value = box.value;
+  const atCaret = document.activeElement === box;
+
+  if (last && norm && value.slice(last.start, last.end) === last.text) {
     if (last.norm.startsWith(norm)) return;
-    // Er den nye en rettet udgave af den forrige, erstatter den. Er den kortere, beholdes den
-    // længste: tale-tjenesten vælger nogle gange en kortere og mere sikker udgave.
     const similar = mostlySame(last.norm, norm);
-    if (similar && norm.length < last.norm.length) return;
+    if (similar && norm.length < last.norm.length) return; // behold den længste udgave
     if (norm.startsWith(last.norm) || similar) {
-      box.value = box.value.slice(0, last.start) + t;
-      state.last = { norm, start: last.start, end: box.value.length, sess: state.sess };
-      box.scrollTop = box.scrollHeight;
-      updateButtons();
+      const caret = box.selectionEnd;
+      // Den erstattende udgave får samme store eller små begyndelsesbogstav som den, den afløser.
+      const ins = last.cap ? t.replace(/^\p{L}/u, (c) => c.toUpperCase()) : t;
+      box.value = value.slice(0, last.start) + ins + value.slice(last.end);
+      rs.last = { ...last, text: ins, norm, end: last.start + ins.length };
+      if (atCaret) {
+        const moved = caret >= last.end ? caret + ins.length - last.text.length : caret;
+        box.setSelectionRange(moved, moved);
+      } else {
+        box.scrollTop = box.scrollHeight;
+      }
+      textChanged();
       return;
     }
   }
-  if (state.paragraphStart === null || now - state.paragraphStart >= PARAGRAPH_S) {
-    state.paragraphStart = now;
-    box.value += (box.value.trim() ? '\n\n' : '') + `[${clock(now)}] `;
-  } else if (/^[.,:;!?]/.test(t)) {
-    // «punktum», «komma» osv. som egen sætning: tegnet erstatter det punktum,
-    // appen selv havde sat efter forrige sætning.
-    box.value = box.value.replace(/[.!?…]*\s*$/, '');
-  } else if (/^\n/.test(t)) {
-    box.value = box.value.replace(/ +$/, '');
-  } else if (box.value && !/[\n ]$/.test(box.value)) {
-    box.value += ' ';
-  }
-  const start = box.value.length;
-  box.value += t;
-  state.last = { norm, start, end: box.value.length, sess: state.sess };
-  box.scrollTop = box.scrollHeight;
-  updateButtons();
+
+  const pos = atCaret ? box.selectionEnd : value.length;
+  let before = value.slice(0, pos);
+  let sep = '';
+  if (/^[.,:;!?]/.test(t) || /^\n/.test(t)) before = before.replace(/[ \t]+$/, '');
+  else if (before && !/\s$/.test(before)) sep = ' ';
+  const prev = (before + sep).replace(/[ \t]+$/, '');
+  const needsCapital = prev === '' || /[.!?]$/.test(prev) || /\n$/.test(prev);
+  const ins = needsCapital ? t.replace(/^\p{L}/u, (c) => c.toUpperCase()) : t;
+  const head = before + sep + ins;
+  box.value = head + value.slice(pos);
+  rs.last = { start: (before + sep).length, end: head.length, text: ins, norm, cap: needsCapital, sess: rs.sess, noteId: activeId };
+  if (atCaret) box.setSelectionRange(head.length, head.length);
+  else box.scrollTop = box.scrollHeight;
+  textChanged();
 }
 
-// Markeringer til beslutninger og handlinger, så de er lette at finde bagefter.
-function addMarker(label) {
-  const box = $('text');
-  const now = live ? live.elapsed() : null;
-  box.value = box.value.replace(/\s+$/, '') + (box.value.trim() ? '\n\n' : '')
-    + (now === null ? '' : `[${clock(now)}] `) + `**${label}:** `;
-  if (live) {
-    live.paragraphStart = now;
-    live.last = null;
-  }
-  box.scrollTop = box.scrollHeight;
-  updateButtons();
+// ---------- Optagelse ----------
+
+const rs = {
+  on: false, startedAt: 0, rec: null, running: false, sess: null, attemptAt: 0, restartTimer: null,
+  failStreak: 0, waiting: false, fatal: null, status: 'Stoppet',
+  pending: '', pendingCommitted: '', flushTimer: null, snapshotAt: 0, last: null,
+  clockTimer: null, watchdog: null,
+};
+
+const STATUS_MARK = { Lytter: '●', Genforbinder: '◌', Stoppet: '■' };
+
+function setStatus(status, extra = '') {
+  rs.status = status;
+  rs.extra = extra;
+  renderInfo();
 }
 
-function stopLive(message) {
-  const state = live;
-  if (!state) return;
-  flushPending(state);
-  state.active = false;
-  onVisibility(false);
-  logEvent(message ? `Stoppet: ${message}` : `Stoppet af brugeren efter ${clock(state.elapsed())}`);
-  stopAlarm(state, 'live-tekst stoppet');
-  live = null;
-  clearInterval(state.timer);
-  // stop() i stedet for abort(), så den sidste sætning når at komme med.
-  try { state.recognition?.stop(); } catch { /* allerede stoppet */ }
-  keepAwake(false);
-  $('live').textContent = '🎙 Start live-tekst';
-  $('live').classList.remove('recording');
-  updateRain();
-  $('live-status').textContent = message || `Stoppet efter ${clock(state.elapsed())}. Læs teksten igennem, før du gemmer.`;
-  // Stoppede den af sig selv, skal brugeren have det at vide, også uden at kigge på skærmen.
-  if (message && settings.alarm) {
-    ring().then((r) => logEvent(`Alarm sendt: vibration ${r.vibration}; lyd ${r.audio}`));
-    showAlarmBanner(message, 'OK');
-  }
+function clockText(ms) {
+  const s = Math.floor(ms / 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(Math.floor(s / 3600))}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}`;
 }
 
-// Telefoner slukker mikrofonen i baggrunden. Husk hvornår, og start igen bagefter.
-function onVisibility(hidden) {
-  const state = live;
-  if (!state) return;
-  if (!MOBILE) {
-    // Computer: genkendelsen kører videre. Det logges kun, så man kan se det bagefter.
-    if (state.hiddenLogged !== hidden) logEvent(hidden ? 'Fanen skjult (genkendelsen fortsætter)' : 'Fanen synlig igen');
-    state.hiddenLogged = hidden;
-    if (!hidden) keepAwake(true);
-    return;
-  }
-  if (hidden) {
-    if (state.gapStart === null) logEvent('Appen skjult (baggrund eller slukket skærm)');
-    state.gapStart ??= state.elapsed();
-  } else {
-    if (state.gapStart !== null) logEvent('Appen synlig igen');
-    keepAwake(true);
-    if (state.gapStart !== null) {
-      gaps.push([state.gapStart, state.elapsed()]);
-      state.gapStart = null;
-      showWarning();
+function renderInfo() {
+  const words = countWords($('text').value);
+  const parts = [`${STATUS_MARK[rs.status]} ${rs.status}`];
+  if (rs.on) parts.push(clockText(Date.now() - rs.startedAt));
+  parts.push(`${words.toLocaleString('da-DK')} ord`);
+  if (rs.extra) parts.push(rs.extra);
+  if (storageFailed) parts.push('! kan ikke gemme');
+  $('info').textContent = parts.join(' · ');
+}
+
+// Det uafsluttede gemmes, så det ikke går tabt. Vokser sætningen, erstatter den nye udgave den gemte.
+function flushPending() {
+  clearTimeout(rs.flushTimer);
+  const text = rs.pending;
+  if (!text || text === rs.pendingCommitted) return;
+  rs.pendingCommitted = text;
+  rs.snapshotAt = Date.now();
+  commit(text);
+}
+
+function startSession() {
+  clearTimeout(rs.restartTimer);
+  rs.restartTimer = null;
+  const rec = new SpeechRecognition();
+  rec.lang = 'da-DK';
+  rec.continuous = !SHORT;
+  rec.interimResults = true;
+  const sess = { startedAt: Date.now(), lastEvent: Date.now(), heard: 0 };
+  rs.sess = sess;
+  rs.rec = rec;
+  rs.running = false;
+  rs.attemptAt = Date.now();
+  const alive = () => { sess.lastEvent = Date.now(); };
+
+  rec.onstart = () => {
+    if (rs.rec !== rec) return;
+    rs.running = true;
+    alive();
+    if (rs.on) setStatus('Lytter');
+  };
+  rec.onaudiostart = () => { if (rs.rec === rec) alive(); };
+  rec.onsoundstart = () => { if (rs.rec === rec) { sess.heard++; alive(); } };
+  rec.onspeechstart = () => { if (rs.rec === rec) { sess.heard++; alive(); } };
+
+  rec.onresult = (e) => {
+    if (rs.rec !== rec) return;
+    sess.heard++;
+    alive();
+    rs.failStreak = 0;
+    if (rs.status !== 'Lytter') setStatus('Lytter');
+    let interim = '';
+    let sawFinal = false;
+    // Kun fra resultIndex: de tidligere er allerede indsat.
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) {
+        commit(r[0].transcript);
+        sawFinal = true;
+      } else {
+        interim += r[0].transcript;
+      }
     }
-  }
-  if (!hidden && state.waiting && state.active) {
-    state.waiting = false;
-    startRecognition(state);
+    if (sawFinal) rs.pendingCommitted = '';
+    rs.pending = interim.trim();
+    clearTimeout(rs.flushTimer);
+    if (rs.pending) rs.flushTimer = setTimeout(flushPending, PAUSE_MS);
+    $('interim').textContent = interim ? '… ' + interim.trim() : '';
+  };
+
+  rec.onerror = (e) => {
+    if (rs.rec !== rec) return;
+    alive();
+    // «no-speech» og «aborted» er normale. Genstarten sker i onend.
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      rs.fatal = 'Mikrofonen er ikke tilladt. Tillad den i browseren.';
+    } else if (e.error === 'language-not-supported') {
+      rs.fatal = 'Browseren kan ikke genkende dansk.';
+    } else if (e.error === 'network' && rs.on) {
+      setStatus('Genforbinder');
+    }
+  };
+
+  rec.onend = () => {
+    if (rs.rec !== rec) return;
+    rs.running = false;
+    $('interim').textContent = '';
+    flushPending();
+    rs.pending = '';
+    rs.pendingCommitted = '';
+    if (!rs.on) return;
+    if (rs.fatal) {
+      const msg = rs.fatal;
+      rs.fatal = null;
+      stop(msg);
+      return;
+    }
+    const quick = Date.now() - sess.startedAt < 1000 && sess.heard === 0;
+    rs.failStreak = quick ? rs.failStreak + 1 : 0;
+    if (document.hidden && MOBILE) {
+      // En telefon slukker mikrofonen i baggrunden. Genstart, når appen er synlig igen.
+      rs.waiting = true;
+      setStatus('Genforbinder');
+      return;
+    }
+    if (rs.failStreak >= 2) setStatus('Genforbinder');
+    const delay = quick ? Math.min(1000 * rs.failStreak, 5000) : RESTART_MS;
+    rs.restartTimer = setTimeout(() => { rs.restartTimer = null; if (rs.on) startSession(); }, delay);
+  };
+
+  try {
+    rec.start();
+  } catch {
+    // Ikke klar endnu: vagten prøver igen.
   }
 }
 
-function showWarning() {
-  const spans = gaps.map(([a, b]) => `${clock(a)}–${clock(b)}`).join(', ');
-  $('live-warning').hidden = false;
-  $('live-warning').textContent =
-    `Advarsel: appen var i baggrunden (${spans}). Der mangler tekst fra det tidsrum. `
-    + 'Hold appen åben med skærmen tændt, mens der tales.';
+function restartNow() {
+  const old = rs.rec;
+  flushPending();
+  rs.pending = '';
+  rs.pendingCommitted = '';
+  startSession();
+  try { old?.abort(); } catch { /* allerede lukket */ }
 }
 
-// Beder telefonen holde skærmen tændt. wantAwake sikrer, at en forespørgsel, der først
-// besvares efter «stop», bliver frigivet igen i stedet for at holde skærmen tændt.
+// Vagten: har genkendelsen mistet sin slutning eller hænger den, startes den forfra.
+function watchdogTick() {
+  if (!rs.on || rs.waiting) return;
+  const now = Date.now();
+  if (!rs.running && !rs.restartTimer && now - rs.attemptAt > 4000) {
+    restartNow();
+  } else if (rs.running && now - rs.sess.lastEvent > STALL_MS) {
+    restartNow();
+  }
+}
+
+function start() {
+  if (!SpeechRecognition || rs.on) return;
+  rs.on = true;
+  rs.startedAt = Date.now();
+  rs.failStreak = 0;
+  rs.waiting = false;
+  rs.fatal = null;
+  rs.snapshotAt = Date.now();
+  $('mic').textContent = '■ STOP';
+  $('mic').classList.add('on');
+  setStatus('Lytter');
+  keepAwake(true);
+  clearInterval(rs.clockTimer);
+  rs.clockTimer = setInterval(() => {
+    renderInfo();
+    if (rs.pending && Date.now() - rs.snapshotAt >= SNAPSHOT_MS) flushPending();
+  }, 1000);
+  clearInterval(rs.watchdog);
+  rs.watchdog = setInterval(watchdogTick, WATCHDOG_MS);
+  startSession();
+}
+
+function stop(reason = '') {
+  if (!rs.on) return;
+  flushPending();
+  rs.on = false;
+  clearInterval(rs.clockTimer);
+  clearInterval(rs.watchdog);
+  clearTimeout(rs.restartTimer);
+  rs.restartTimer = null;
+  const rec = rs.rec;
+  rs.rec = null;
+  try { rec?.stop(); } catch { /* allerede lukket */ }
+  rs.pending = '';
+  rs.pendingCommitted = '';
+  $('interim').textContent = '';
+  $('mic').textContent = '● START';
+  $('mic').classList.remove('on');
+  keepAwake(false);
+  saveNow();
+  setStatus('Stoppet', reason ? '! ' + reason : '');
+}
+
+function toggle() {
+  if (rs.on) stop();
+  else start();
+}
+
+// Beder telefonen holde skærmen tændt. wantAwake sikrer, at en forespørgsel, der først besvares
+// efter «stop», bliver frigivet i stedet for at holde skærmen tændt.
+let wakeLock = null;
 let wantAwake = false;
 
 async function keepAwake(on) {
@@ -848,228 +504,127 @@ async function keepAwake(on) {
         return;
       }
       wakeLock = lock;
-      logEvent('Skærmlås tændt');
-      lock.addEventListener('release', () => {
-        if (wakeLock !== lock) return;
-        wakeLock = null;
-        if (live) logEvent('Skærmlås frigivet af telefonen (skærmen kan være slukket)');
-      });
+      lock.addEventListener('release', () => { if (wakeLock === lock) wakeLock = null; });
     } else if (wakeLock) {
       const lock = wakeLock;
       wakeLock = null;
       await lock.release();
     }
-  } catch (err) {
-    if (live) logEvent('Skærmlås kunne ikke tændes: ' + err.name);
-  }
+  } catch { /* ikke afgørende */ }
 }
 
-// ---------- Gem ----------
-
-function buildMarkdown() {
-  const title = $('title').value.trim() || 'Møde';
-  const date = $('date').value || today();
-  const project = $('project').value.trim();
-  return [
-    '---',
-    `titel: "${title.replace(/["\\]/g, '\\$&')}"`,
-    `dato: ${date}`,
-    ...(project ? [`projekt: "${project.replace(/["\\]/g, '\\$&')}"`] : []),
-    `kilde: live-tekst via browserens tale-tjeneste (${liveService()}), ikke gennemlæst af assistenten`,
-    '---',
-    '',
-    `# ${title}`,
-    '',
-    `Dato: ${date}`,
-    ...(project ? [`Projekt: ${project}`] : []),
-    '',
-    $('text').value.trim(),
-    '',
-  ].join('\n');
-}
+// ---------- Kopiér og download ----------
 
 function slug(text) {
   return text.toLowerCase()
     .replace(/æ/g, 'ae').replace(/ø/g, 'oe').replace(/å/g, 'aa')
     .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
-    .slice(0, 60) || 'moede';
+    .slice(0, 60) || 'note';
 }
 
-function saveMarkdown() {
-  const blob = new Blob([buildMarkdown()], { type: 'text/markdown;charset=utf-8' });
+function ymd(ts) {
+  const d = new Date(ts);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+function buildMarkdown(note) {
+  const title = titleOf(note, 60).replace(/…$/, '');
+  return [
+    '---',
+    `titel: "${title.replace(/["\\]/g, '\\$&')}"`,
+    `dato: ${ymd(note.created)}`,
+    'kilde: live-tekst via browserens tale-tjeneste, ikke gennemlæst',
+    '---',
+    '',
+    `# ${title}`,
+    '',
+    note.text.trim(),
+    '',
+  ].join('\n');
+}
+
+function download() {
+  flushPending();
+  const note = current();
+  if (!note.text.trim()) return;
+  const blob = new Blob([buildMarkdown(note)], { type: 'text/markdown;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = fileName();
+  a.download = `${ymd(note.created)}-${slug(titleOf(note, 60))}.md`;
   document.body.append(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
 
-function fileName() {
-  return `${$('date').value || today()}-${slug($('title').value)}.md`;
-}
-
-// Deler filen via telefonens delingsmenu, fx til OneDrive eller mail.
-async function shareFile() {
-  for (const type of ['text/markdown', 'text/plain']) {
-    const file = new File([buildMarkdown()], fileName(), { type });
-    if (!navigator.canShare?.({ files: [file] })) continue;
-    try {
-      await navigator.share({ files: [file], title: $('title').value.trim() || 'Møde' });
-    } catch (err) {
-      if (err.name !== 'AbortError') alert('Filen kunne ikke deles. Brug «Gem som .md-fil» i stedet.');
-    }
-    return;
-  }
-  alert('Browseren kan ikke dele filen. Brug «Gem som .md-fil» i stedet.');
-}
-
-async function copyText() {
+async function copyAll() {
+  flushPending();
+  const text = current().text;
+  if (!text.trim()) return;
+  let label;
   try {
-    await navigator.clipboard.writeText(buildMarkdown());
-    $('copy').textContent = 'Kopieret ✓';
+    await navigator.clipboard.writeText(text);
+    label = 'Kopieret ✓';
   } catch {
-    $('copy').textContent = 'Kunne ikke kopiere';
+    label = 'Kunne ikke kopiere';
   }
-  setTimeout(() => ($('copy').textContent = 'Kopiér tekst'), 2000);
-}
-
-// ---------- Hjælpere ----------
-
-function updateButtons() {
-  const hasText = $('text').value.trim().length > 0;
-  $('save-md').disabled = !hasText;
-  $('copy').disabled = !hasText;
-  $('share').disabled = !hasText;
-  $('reset').disabled = !hasText && !$('title').value.trim() && !$('project').value.trim();
-  const words = countWords($('text').value);
-  $('count').textContent = `${words.toLocaleString('da-DK')} ord`;
-  scheduleSave();
-}
-
-// Tidsstempler som [01:08] er ikke ord og tælles ikke med.
-function countWords(text) {
-  return (text.replace(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g, ' ').match(/\S+/g) || []).length;
-}
-
-// ---------- Udkast ----------
-
-// Teksten gemmes løbende i browseren på denne enhed, så den ikke går tabt,
-// hvis appen lukkes. Den sendes ikke nogen steder hen.
-const DRAFT_KEY = 'transskription-udkast';
-let saveTimer = null;
-
-function scheduleSave() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveDraft, 500);
-}
-
-function saveDraft() {
-  clearTimeout(saveTimer);
-  try {
-    if (!$('text').value.trim() && !$('title').value.trim() && !$('project').value.trim()) {
-      localStorage.removeItem(DRAFT_KEY);
-      return;
-    }
-    const draft = { title: $('title').value, project: $('project').value, date: $('date').value, text: $('text').value, saved: Date.now() };
-    // Uændret udkast beholder sit gamle tidspunkt, så "gendannet fra" er rigtigt.
-    const old = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
-    if (old && old.title === draft.title && old.project === draft.project && old.date === draft.date && old.text === draft.text) return;
-    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
-  } catch { /* privat vindue eller fuld lagerplads: så virker appen uden udkast */ }
-}
-
-function restoreDraft() {
-  try {
-    const draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
-    if (!draft || (!draft.text?.trim() && !draft.title?.trim())) return;
-    $('title').value = draft.title || '';
-    $('project').value = draft.project || '';
-    if (draft.date) $('date').value = draft.date;
-    $('text').value = draft.text || '';
-    const when = new Date(draft.saved).toLocaleString('da-DK', { dateStyle: 'short', timeStyle: 'short' });
-    $('restored').hidden = false;
-    $('restored').textContent = `Udkast fra ${when} er gendannet. Nye sætninger kommer bagefter.`;
-  } catch { /* intet udkast */ }
-}
-
-function resetAll() {
-  if (live) return;
-  if ($('text').value.trim() && !confirm('Teksten og titlen bliver slettet. Har du gemt filen, du skal bruge? Fortsæt?')) return;
-  $('title').value = '';
-  $('project').value = '';
-  $('text').value = '';
-  $('date').value = today();
-  $('restored').hidden = true;
-  $('live-warning').hidden = true;
-  $('live-status').hidden = true;
-  try { localStorage.removeItem(DRAFT_KEY); } catch { /* ikke afgørende */ }
-  updateButtons();
-}
-
-function clock(seconds) {
-  const s = Math.floor(seconds % 60);
-  const m = Math.floor(seconds / 60) % 60;
-  const h = Math.floor(seconds / 3600);
-  const pad = (n) => String(n).padStart(2, '0');
-  return h ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
-}
-
-function today() {
-  const d = new Date();
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-}
-
-// Tidligere udgaver hentede en sprogmodel på 250–450 MB. Den bruges ikke
-// længere, så den slettes for at frigøre plads.
-async function removeOldModel() {
-  try {
-    await Promise.all(['transformers-cache', 'experimental_transformers-hash-cache'].map((k) => caches.delete(k)));
-  } catch { /* intet at slette */ }
+  $('copy').textContent = label;
+  setTimeout(() => ($('copy').textContent = 'Kopiér alt'), 1800);
 }
 
 // ---------- Start ----------
 
-$('date').value = today();
-$('version').textContent = `Version ${VERSION}`;
-$('live').onclick = toggleLive;
-$('save-md').onclick = saveMarkdown;
-$('copy').onclick = copyText;
-$('text').oninput = updateButtons;
-$('title').oninput = updateButtons;
-$('project').oninput = updateButtons;
-$('share').onclick = shareFile;
-document.querySelectorAll('[data-marker]').forEach((b) => { b.onclick = () => addMarker(b.dataset.marker); });
-bindSettings();
-applySettings();
-renderLog();
-window.addEventListener('online', () => logEvent('Netværk: online'));
-window.addEventListener('offline', () => logEvent('Netværk: offline'));
-window.addEventListener('pagehide', persistLog);
-runBoot();
-$('date').onchange = scheduleSave;
-$('reset').onclick = resetAll;
-// Gem med det samme, når appen forlades, så sidste ord ikke går tabt.
-document.addEventListener('visibilitychange', () => document.hidden && saveDraft());
-window.addEventListener('pagehide', saveDraft);
-document.addEventListener('visibilitychange', () => { onVisibility(document.hidden); updateRain(); });
-window.addEventListener('resize', () => { if (rain.drops.length) { resizeRain(); } });
-window.addEventListener('beforeunload', (e) => {
-  if (live || $('text').value.trim()) e.preventDefault();
+migrateOldVersion();
+current();
+saveNow();
+$('version').textContent = `v${VERSION}`;
+showNote();
+
+$('mic').onclick = toggle;
+$('copy').onclick = copyAll;
+$('download').onclick = download;
+$('delete').onclick = deleteNote;
+$('new').onclick = createNote;
+$('panel-new').onclick = createNote;
+$('open-list').onclick = openPanel;
+$('panel-close').onclick = closePanel;
+$('text').addEventListener('input', textChanged);
+
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.code === 'Space') {
+    e.preventDefault();
+    toggle();
+  } else if (e.key === 'Escape' && !$('panel').hidden) {
+    closePanel();
+  }
 });
 
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    flushPending();
+    saveNow();
+    return;
+  }
+  if (!rs.on) return;
+  keepAwake(true);
+  if (rs.waiting) {
+    rs.waiting = false;
+    startSession();
+  }
+});
+window.addEventListener('pagehide', () => { flushPending(); saveNow(); });
+
 if (!SpeechRecognition) {
-  $('live').hidden = true;
-  $('live-intro').textContent = 'Live-tekst virker ikke i denne browser. Brug Edge, Chrome eller Safari.';
+  $('mic').disabled = true;
+  $('mic').textContent = 'IKKE MULIGT';
+  $('info').textContent = '! Browseren kan ikke genkende tale. Brug Chrome eller Edge.';
 }
-if (navigator.canShare?.({ files: [new File(['x'], 'a.md', { type: 'text/plain' })] })) {
-  $('share').hidden = false;
+
+// Tidligere udgaver hentede en sprogmodel. Den bruges ikke længere og slettes.
+if ('caches' in window) {
+  ['transformers-cache', 'experimental_transformers-hash-cache'].forEach((k) => caches.delete(k).catch(() => {}));
 }
-restoreDraft();
-updateButtons();
-removeOldModel();
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
