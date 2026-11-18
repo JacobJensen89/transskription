@@ -1,7 +1,7 @@
 // Dansk tale til tekst med browserens talegenkendelse. Noter gemmes i browseren på enheden.
 
 // Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se, om den nyeste er hentet.
-const VERSION = 20;
+const VERSION = 21;
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -44,10 +44,10 @@ function migrateOldVersion() {
     const raw = localStorage.getItem('transskription-udkast');
     if (raw && !notes.length) {
       const d = JSON.parse(raw);
-      const text = [d.title, d.text].filter((s) => s && s.trim()).join('\n\n');
-      if (text) {
+      if ((d.title && d.title.trim()) || (d.text && d.text.trim())) {
         const note = newNote();
-        note.text = text;
+        note.title = (d.title || '').trim();
+        note.text = d.text || '';
         note.created = note.updated = d.saved || Date.now();
         activeId = note.id;
       }
@@ -83,7 +83,7 @@ function scheduleSave() {
 }
 
 function titleOf(note, max = 40) {
-  const line = (note.text.split('\n').find((l) => l.trim()) || '').trim();
+  const line = (note.title || '').trim() || (note.text.split('\n').find((l) => l.trim()) || '').trim();
   if (!line) return 'Ny note';
   return line.length > max ? line.slice(0, max).trimEnd() + '…' : line;
 }
@@ -96,9 +96,14 @@ function formatDate(ts) {
   return new Date(ts).toLocaleString('da-DK', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
+function longDate(ts) {
+  return new Date(ts).toLocaleDateString('da-DK', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
 function renderTitle() {
-  $('title').textContent = titleOf(current());
-  document.title = 'Transskription';
+  const note = current();
+  if (document.activeElement !== $('heading')) $('heading').value = note.title || '';
+  $('date').textContent = longDate(note.created);
 }
 
 function renderList() {
@@ -123,6 +128,7 @@ function renderList() {
 function showNote() {
   const note = current();
   $('text').value = note.text;
+  $('heading').value = note.title || '';
   renderTitle();
   renderInfo();
 }
@@ -140,9 +146,9 @@ function openNote(id) {
 function createNote() {
   // En tom note bruges igen i stedet for at samle tomme noter.
   const note = current();
-  if (!note.text.trim()) {
+  if (!note.text.trim() && !(note.title || '').trim()) {
     closePanel();
-    $('text').focus();
+    $('heading').focus();
     return;
   }
   flushPending();
@@ -156,7 +162,7 @@ function createNote() {
 
 function deleteNote() {
   const note = current();
-  if (note.text.trim() && !confirm('Slet denne note?')) return;
+  if ((note.text.trim() || (note.title || '').trim()) && !confirm('Slet denne note?')) return;
   flushPending();
   notes = notes.filter((n) => n.id !== note.id);
   activeId = notes.length ? [...notes].sort((a, b) => b.updated - a.updated)[0].id : null;
@@ -547,7 +553,7 @@ function buildMarkdown(note) {
 function download() {
   flushPending();
   const note = current();
-  if (!note.text.trim()) return;
+  if (!note.text.trim() && !(note.title || '').trim()) return;
   const blob = new Blob([buildMarkdown(note)], { type: 'text/markdown;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -590,6 +596,13 @@ $('panel-new').onclick = createNote;
 $('open-list').onclick = openPanel;
 $('panel-close').onclick = closePanel;
 $('text').addEventListener('input', textChanged);
+$('heading').addEventListener('input', () => {
+  const note = current();
+  note.title = $('heading').value;
+  note.updated = Date.now();
+  scheduleSave();
+});
+$('heading').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('text').focus(); } });
 
 document.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.code === 'Space') {

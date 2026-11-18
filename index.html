@@ -15,7 +15,10 @@
 <body>
   <header id="bar">
     <button type="button" id="open-list" aria-label="Noter">☰</button>
-    <h1 id="title">Ny note</h1>
+    <div id="head">
+      <input type="text" id="heading" placeholder="Overskrift" autocomplete="off" aria-label="Overskrift">
+      <span id="date"></span>
+    </div>
     <button type="button" id="new" aria-label="Ny note">+</button>
   </header>
 
@@ -32,7 +35,7 @@
       <button type="button" id="download" title="Download noten som .md-fil">Download</button>
       <button type="button" id="delete">Slet</button>
     </div>
-    <p id="foot">Lyden sendes til browserens tale-tjeneste. <span id="version"></span></p>
+    <p id="foot"><span id="version"></span></p>
   </section>
 
   <aside id="panel" hidden>

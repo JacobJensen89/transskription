@@ -12,8 +12,9 @@ Appen ligger på https://jacobjensen89.github.io/transskription/ og kan installe
   *nyt afsnit*, så skrives tegnet i stedet for ordet. Stort begyndelsesbogstav kommer efter punktum,
   spørgsmålstegn, udråbstegn og ny linje.
 - Står markøren i teksten, bliver ny tekst sat ind dér. Ellers kommer den til sidst.
-- **☰** viser alle noter, **+** laver en ny. Noten hedder det samme som dens første linje.
-- **Kopiér alt** kopierer teksten. **Download** gemmer noten som en `.md`-fil med titel og dato.
+- Skriv en **overskrift** øverst. Datoen sætter appen selv. **☰** viser alle tidligere noter, **+** laver
+  en ny. Uden overskrift hedder noten det samme som dens første linje.
+- **Kopiér alt** kopierer teksten. **Download** gemmer noten som en `.md`-fil med overskrift og dato.
   **Slet** fjerner noten efter en bekræftelse.
 - Under knappen står status (Lytter / Genforbinder / Stoppet), tid og antal ord.
 
