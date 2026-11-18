@@ -11,6 +11,8 @@ Appen ligger på https://jacobjensen89.github.io/transskription/ og kan installe
 - Sig *punktum, komma, kolon, semikolon, spørgsmålstegn, udråbstegn, ny linje, linjeskift* eller
   *nyt afsnit*, så skrives tegnet i stedet for ordet. Stort begyndelsesbogstav kommer efter punktum,
   spørgsmålstegn, udråbstegn og ny linje.
+- Mens der tales, viser en boks nederst det, der bliver sagt lige nu, med en blinkende markør. Så kan
+  du se, at den lytter. Boksen forsvinder, når teksten er sat ind i noten.
 - Står markøren i teksten, bliver ny tekst sat ind dér. Ellers kommer den til sidst.
 - Skriv en **overskrift** øverst. Datoen sætter appen selv. **☰** viser alle tidligere noter, **+** laver
   en ny. Uden overskrift hedder noten det samme som dens første linje.

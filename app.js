@@ -1,7 +1,7 @@
 // Dansk tale til tekst med browserens talegenkendelse. Noter gemmes i browseren på enheden.
 
 // Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se, om den nyeste er hentet.
-const VERSION = 21;
+const VERSION = 22;
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -320,6 +320,13 @@ function renderInfo() {
   $('info').textContent = parts.join(' · ');
 }
 
+// Pop-up'en med det, der bliver sagt lige nu. Er teksten lang, vises kun den sidste del.
+function showInterim(text) {
+  const el = $('interim');
+  el.textContent = text.length > 220 ? '… ' + text.slice(-220).replace(/^\S*\s/, '') : text;
+  el.hidden = !text;
+}
+
 // Det uafsluttede gemmes, så det ikke går tabt. Vokser sætningen, erstatter den nye udgave den gemte.
 function flushPending() {
   clearTimeout(rs.flushTimer);
@@ -375,8 +382,8 @@ function startSession() {
     if (sawFinal) rs.pendingCommitted = '';
     rs.pending = interim.trim();
     clearTimeout(rs.flushTimer);
-    if (rs.pending) rs.flushTimer = setTimeout(flushPending, PAUSE_MS);
-    $('interim').textContent = interim ? '… ' + interim.trim() : '';
+    if (rs.pending) rs.flushTimer = setTimeout(() => { flushPending(); showInterim(''); }, PAUSE_MS);
+    showInterim(interim.trim());
   };
 
   rec.onerror = (e) => {
@@ -395,7 +402,7 @@ function startSession() {
   rec.onend = () => {
     if (rs.rec !== rec) return;
     rs.running = false;
-    $('interim').textContent = '';
+    showInterim('');
     flushPending();
     rs.pending = '';
     rs.pendingCommitted = '';
@@ -456,6 +463,7 @@ function start() {
   rs.snapshotAt = Date.now();
   $('mic').textContent = '■ STOP';
   $('mic').classList.add('on');
+  document.body.classList.add('rec');
   setStatus('Lytter');
   keepAwake(true);
   clearInterval(rs.clockTimer);
@@ -481,7 +489,8 @@ function stop(reason = '') {
   try { rec?.stop(); } catch { /* allerede lukket */ }
   rs.pending = '';
   rs.pendingCommitted = '';
-  $('interim').textContent = '';
+  showInterim('');
+  document.body.classList.remove('rec');
   $('mic').textContent = '● START';
   $('mic').classList.remove('on');
   keepAwake(false);
