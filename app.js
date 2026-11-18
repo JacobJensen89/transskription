@@ -1,7 +1,7 @@
 // Dansk tale til tekst med browserens talegenkendelse. Noter gemmes i browseren på enheden.
 
 // Tælles op ved hver ny udgave sammen med CACHE i sw.js, så man kan se, om den nyeste er hentet.
-const VERSION = 22;
+const VERSION = 23;
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -216,8 +216,21 @@ function capitalizeInner(text) {
   return text.replace(/([.!?]\s+|\n)(\p{L})/gu, (m, before, letter) => before + letter.toUpperCase());
 }
 
+// Google sætter selv tegn og oversætter også «punktum» til et punktum, så tegnene kan komme to
+// gange («klar. .», «udkast, ,», «det? ?»). Et løb af tegn bliver til ét: det stærkeste.
+const PUNCT_RUN = /[.,:;!?](?:\s*[.,:;!?])+/g;
+
+function strongest(run) {
+  for (const c of ['?', '!', '.', ':', ';']) if (run.includes(c)) return c;
+  return ',';
+}
+
+function collapsePunctuation(text) {
+  return text.replace(PUNCT_RUN, (run) => strongest(run));
+}
+
 function formatSegment(raw) {
-  const t = applyCommands(raw.trim());
+  const t = collapsePunctuation(applyCommands(raw.trim()));
   return t ? capitalizeInner(t) : '';
 }
 
@@ -273,12 +286,30 @@ function commit(raw) {
 
   const pos = atCaret ? box.selectionEnd : value.length;
   let before = value.slice(0, pos);
+  let body = t;
+  // Begynder sætningen med et tegn, og slutter teksten før den også med et, bliver de til ét.
+  if (/^[.,:;!?]/.test(body)) {
+    before = before.replace(/[ \t]+$/, '');
+    const prevRun = before.match(/[.,:;!?]+$/);
+    if (prevRun) {
+      const lead = body.match(/^[.,:;!?\s]+/)[0];
+      before = before.slice(0, -prevRun[0].length) + strongest(prevRun[0] + lead);
+      body = body.slice(lead.length);
+      if (!body) {
+        box.value = before + value.slice(pos);
+        rs.last = null;
+        if (atCaret) box.setSelectionRange(before.length, before.length);
+        textChanged();
+        return;
+      }
+    }
+  }
   let sep = '';
-  if (/^[.,:;!?]/.test(t) || /^\n/.test(t)) before = before.replace(/[ \t]+$/, '');
+  if (/^[.,:;!?]/.test(body) || /^\n/.test(body)) before = before.replace(/[ \t]+$/, '');
   else if (before && !/\s$/.test(before)) sep = ' ';
   const prev = (before + sep).replace(/[ \t]+$/, '');
   const needsCapital = prev === '' || /[.!?]$/.test(prev) || /\n$/.test(prev);
-  const ins = needsCapital ? t.replace(/^\p{L}/u, (c) => c.toUpperCase()) : t;
+  const ins = needsCapital ? body.replace(/^\p{L}/u, (c) => c.toUpperCase()) : body;
   const head = before + sep + ins;
   box.value = head + value.slice(pos);
   rs.last = { start: (before + sep).length, end: head.length, text: ins, norm, cap: needsCapital, sess: rs.sess, noteId: activeId };
